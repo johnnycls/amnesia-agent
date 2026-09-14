@@ -3,7 +3,9 @@ import json
 import tempfile
 import unittest
 from contextlib import aclosing
+from pathlib import Path
 from types import SimpleNamespace
+from typing import ClassVar
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
@@ -15,11 +17,22 @@ from amnesia_agent_local_server.sse import event_envelope
 
 
 class FakeSession:
-    def __init__(self, provider: object, policy: object) -> None:
+    created: ClassVar[list["FakeSession"]] = []
+
+    def __init__(
+        self,
+        provider: object,
+        policy: object,
+        workspace_root: object = None,
+    ) -> None:
         self.provider = provider
         self.policy = policy
+        self.workspace_root = workspace_root
+        type(self).created.append(self)
 
     async def turn(self, text: str, response_format: object = None):
+        self.turn_text = text
+        self.turn_response_format = response_format
         yield '{"answer":"'
         yield {
             "role": "assistant",
@@ -52,8 +65,13 @@ class FakeSession:
 
 
 class ClosingFakeSession(FakeSession):
-    def __init__(self, provider: object, policy: object) -> None:
-        super().__init__(provider, policy)
+    def __init__(
+        self,
+        provider: object,
+        policy: object,
+        workspace_root: object = None,
+    ) -> None:
+        super().__init__(provider, policy, workspace_root)
         self.closed = False
 
     async def turn(self, text: str, response_format: object = None):
@@ -65,12 +83,12 @@ class ClosingFakeSession(FakeSession):
             self.closed = True
 
 
-def _write_config(store: ConfigStore) -> None:
+def _write_config(store: ConfigStore, extra: dict[str, object] | None = None) -> None:
     store.path.parent.mkdir(parents=True, exist_ok=True)
-    store.path.write_text(
-        '{"model":"openai/test","api_key":"test-key"}',
-        encoding="utf-8",
-    )
+    payload: dict[str, object] = {"model": "openai/test", "api_key": "test-key"}
+    if extra:
+        payload.update(extra)
+    store.path.write_text(json.dumps(payload), encoding="utf-8")
 
 
 class SseTests(unittest.TestCase):
@@ -126,6 +144,10 @@ class SseTests(unittest.TestCase):
 
 
 class SessionTests(unittest.TestCase):
+    def setUp(self) -> None:
+        FakeSession.created = []
+        ClosingFakeSession.created = []
+
     def test_stream_turn_emits_done_and_releases_slot(self) -> None:
         async def run() -> list[dict[str, object]]:
             with tempfile.TemporaryDirectory() as directory:
@@ -154,8 +176,6 @@ class SessionTests(unittest.TestCase):
                     "amnesia_agent_local_server.session.KernelSession", ClosingFakeSession
                 ):
                     events_agen = manager.start_turn("hello")
-                    assert isinstance(manager.get_session(), ClosingFakeSession)
-                    session = manager.get_session()
 
                     async def consume() -> None:
                         async with aclosing(events_agen):
@@ -165,9 +185,41 @@ class SessionTests(unittest.TestCase):
 
                     await consume()
                     self.assertFalse(manager.active_turn)
-                    self.assertTrue(session.closed)
+                    self.assertEqual(len(ClosingFakeSession.created), 1)
+                    self.assertTrue(ClosingFakeSession.created[0].closed)
 
         asyncio.run(run())
+
+    def test_each_turn_builds_fresh_session_with_workspace_root(self) -> None:
+        async def run() -> None:
+            with tempfile.TemporaryDirectory() as directory:
+                store = ConfigStore(directory)
+                custom = str(Path(directory) / "ws")
+                _write_config(store, {"workspace_path": custom})
+                manager = SessionManager(store)
+                with patch("amnesia_agent_local_server.session.KernelSession", FakeSession):
+                    for text in ("one", "two"):
+                        events_agen = manager.start_turn(text)
+                        async with aclosing(events_agen):
+                            async for _event in events_agen:
+                                pass
+                self.assertEqual(len(FakeSession.created), 2)
+                self.assertIsNot(FakeSession.created[0], FakeSession.created[1])
+                self.assertEqual(FakeSession.created[0].workspace_root, custom)
+                self.assertEqual(FakeSession.created[1].workspace_root, custom)
+
+        asyncio.run(run())
+
+    def test_build_session_is_not_cached(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = ConfigStore(directory)
+            _write_config(store)
+            manager = SessionManager(store)
+            with patch("amnesia_agent_local_server.session.KernelSession", FakeSession):
+                first = manager.build_session()
+                second = manager.build_session()
+            self.assertIsNot(first, second)
+            self.assertEqual(len(FakeSession.created), 2)
 
     def test_active_turn_blocks_config_and_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -177,6 +229,8 @@ class SessionTests(unittest.TestCase):
             manager._active = True
             with self.assertRaises(TurnBusyError):
                 manager.update_config({"model": "openai/new"})
+            with self.assertRaises(TurnBusyError):
+                manager.update_config({"workspace_path": "/tmp/other"})
             with self.assertRaises(TurnBusyError):
                 manager.setup_or_repair_workspace()
             with self.assertRaises(TurnBusyError):
@@ -217,6 +271,104 @@ class SessionTests(unittest.TestCase):
             self.assertEqual(shutdown.status_code, 200)
             self.assertEqual(shutdown.json(), {"shutting_down": True})
             self.assertTrue(app.state.uvicorn_server.should_exit)
+
+    def test_start_turn_passes_response_format_none_by_default(self) -> None:
+        async def run() -> None:
+            with tempfile.TemporaryDirectory() as directory:
+                store = ConfigStore(directory)
+                _write_config(store)
+                manager = SessionManager(store)
+                with patch("amnesia_agent_local_server.session.KernelSession", FakeSession):
+                    events_agen = manager.start_turn("hello")
+                    async with aclosing(events_agen):
+                        async for _event in events_agen:
+                            pass
+                self.assertEqual(len(FakeSession.created), 1)
+                self.assertIsNone(FakeSession.created[0].turn_response_format)
+
+        asyncio.run(run())
+
+    def test_start_turn_passes_response_format_through(self) -> None:
+        fmt = {"type": "json_object"}
+
+        async def run() -> None:
+            with tempfile.TemporaryDirectory() as directory:
+                store = ConfigStore(directory)
+                _write_config(store)
+                manager = SessionManager(store)
+                with patch("amnesia_agent_local_server.session.KernelSession", FakeSession):
+                    events_agen = manager.start_turn("hello", response_format=fmt)
+                    async with aclosing(events_agen):
+                        async for _event in events_agen:
+                            pass
+                self.assertEqual(FakeSession.created[0].turn_response_format, fmt)
+
+        asyncio.run(run())
+
+    def test_turn_http_omitted_response_format_is_none(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = ConfigStore(directory)
+            _write_config(store)
+            client = TestClient(create_app(store))
+            with patch("amnesia_agent_local_server.session.KernelSession", FakeSession):
+                response = client.post("/v1/turn", json={"text": "hi"})
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(len(FakeSession.created), 1)
+            self.assertIsNone(FakeSession.created[0].turn_response_format)
+
+    def test_turn_http_null_response_format_is_none(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = ConfigStore(directory)
+            _write_config(store)
+            client = TestClient(create_app(store))
+            with patch("amnesia_agent_local_server.session.KernelSession", FakeSession):
+                response = client.post(
+                    "/v1/turn", json={"text": "hi", "response_format": None}
+                )
+            self.assertEqual(response.status_code, 200)
+            self.assertIsNone(FakeSession.created[0].turn_response_format)
+
+    def test_turn_http_passes_response_format_object(self) -> None:
+        fmt = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "answer_with_choices",
+                "strict": True,
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "answer": {"type": "string"},
+                        "choices": {"type": "array", "items": {"type": "string"}},
+                    },
+                    "required": ["answer", "choices"],
+                    "additionalProperties": False,
+                },
+            },
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            store = ConfigStore(directory)
+            _write_config(store)
+            client = TestClient(create_app(store))
+            with patch("amnesia_agent_local_server.session.KernelSession", FakeSession):
+                response = client.post(
+                    "/v1/turn", json={"text": "hi", "response_format": fmt}
+                )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(FakeSession.created[0].turn_response_format, fmt)
+
+    def test_turn_http_rejects_wrong_response_format_type(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = ConfigStore(directory)
+            _write_config(store)
+            client = TestClient(create_app(store), raise_server_exceptions=False)
+            for bad in ("sneaky", ["not", "an", "object"], 42):
+                with self.subTest(bad=bad):
+                    response = client.post(
+                        "/v1/turn", json={"text": "hi", "response_format": bad}
+                    )
+                    self.assertEqual(response.status_code, 422)
+                    self.assertIn("detail", response.json())
+
 
 
 if __name__ == "__main__":

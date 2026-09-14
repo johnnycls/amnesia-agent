@@ -1,4 +1,4 @@
-"""One KernelSession lifecycle: rebuild from config, turn busy flag, invalidate."""
+"""SessionManager: config-backed KernelSession construction and turn busy flag."""
 
 from __future__ import annotations
 
@@ -9,26 +9,13 @@ from typing import Any
 from amnesia_agent_kernel import AgentError, ExecutionPolicy, KernelSession, ProviderConfig
 from litellm.types.llms.openai import AllMessageValues
 
-from amnesia_agent_local_server.config import ConfigStore, LoadedConfig, public_config
+from amnesia_agent_local_server.config import (
+    ConfigStore,
+    LoadedConfig,
+    public_config,
+    resolved_workspace_root,
+)
 from amnesia_agent_local_server.sse import event_envelope
-
-# Structured output requested for desktop frontends (answer + choice chips).
-RESPONSE_FORMAT: dict[str, Any] = {
-    "type": "json_schema",
-    "json_schema": {
-        "name": "answer_with_choices",
-        "strict": True,
-        "schema": {
-            "type": "object",
-            "properties": {
-                "answer": {"type": "string"},
-                "choices": {"type": "array", "items": {"type": "string"}},
-            },
-            "required": ["answer", "choices"],
-            "additionalProperties": False,
-        },
-    },
-}
 
 
 class TurnBusyError(Exception):
@@ -36,7 +23,11 @@ class TurnBusyError(Exception):
 
 
 class SessionManager:
-    """Own config-backed ``KernelSession`` rebuild and the turn busy flag."""
+    """Own config loading, fresh KernelSession construction, and the turn busy flag.
+
+    Strategy A: do **not** cache ``KernelSession`` across turns. Every turn and
+    every workspace read/update builds a new session from the latest config.
+    """
 
     def __init__(
         self,
@@ -46,7 +37,6 @@ class SessionManager:
         self.config_store = config_store or ConfigStore()
         self.instance_id = instance_id
         self.config_store.setup()
-        self._session: KernelSession | None = None
         self._active = False
         self._turn_events: AsyncIterator[Any] | None = None
 
@@ -62,19 +52,24 @@ class SessionManager:
             "instance_id": self.instance_id,
         }
 
-    def invalidate(self) -> None:
-        """Drop the cached session so the next use rebuilds from config."""
-        self._session = None
-
     def require_idle(self, action: str) -> None:
         if self._active:
             raise TurnBusyError(f"Cannot {action} during an active turn")
 
-    def get_session(self) -> KernelSession:
-        if self._session is None:
-            loaded = self.config_store.load()
-            self._session = KernelSession(loaded.provider, loaded.policy)
-        return self._session
+    def _loaded(self) -> LoadedConfig:
+        return self.config_store.load()
+
+    def _workspace_root(self, loaded: LoadedConfig | None = None) -> str | None:
+        return resolved_workspace_root(loaded if loaded is not None else self._loaded())
+
+    def build_session(self, loaded: LoadedConfig | None = None) -> KernelSession:
+        """Construct a fresh ``KernelSession`` from the latest (or given) config."""
+        config = loaded if loaded is not None else self._loaded()
+        return KernelSession(
+            config.provider,
+            config.policy,
+            workspace_root=resolved_workspace_root(config),
+        )
 
     def read_config(self) -> dict[str, Any]:
         return public_config(self.config_store.load())
@@ -85,60 +80,63 @@ class SessionManager:
         current = self.config_store.load()
         updated = _merge_config(current, fields)
         self.config_store.save(updated)
-        self.invalidate()
         return public_config(updated)
 
     def reset_config(self) -> dict[str, Any]:
         self.require_idle("reset configuration")
-        self.invalidate()
         return public_config(self.config_store.reset())
 
     def check_workspace(self) -> bool:
-        return KernelSession.check_workspace()
+        return KernelSession.check_workspace(self._workspace_root())
 
     def setup_or_repair_workspace(self) -> None:
         self.require_idle("setup or repair workspace")
-        KernelSession.setup_or_repair_workspace()
-        self.invalidate()
+        KernelSession.setup_or_repair_workspace(self._workspace_root())
 
     def create_or_reset_workspace(self) -> None:
         self.require_idle("create or reset workspace")
-        KernelSession.create_or_reset_workspace()
-        self.invalidate()
+        KernelSession.create_or_reset_workspace(self._workspace_root())
 
     def read_system_prompt(self) -> str:
-        return self.get_session().read_system_prompt()
+        return self.build_session().read_system_prompt()
 
     def update_system_prompt(self, content: str) -> str:
-        self.get_session().update_system_prompt(content)
+        self.build_session().update_system_prompt(content)
         return content
 
     def read_memory(self) -> str:
-        return self.get_session().read_memory()
+        return self.build_session().read_memory()
 
     def update_memory(self, content: str) -> str:
-        self.get_session().update_memory(content)
+        self.build_session().update_memory(content)
         return content
 
     def list_history(self) -> list[str]:
-        return self.get_session().list_history()
+        return self.build_session().list_history()
 
     def read_history(self, date: str | None = None) -> list[AllMessageValues]:
-        return list(self.get_session().read_history(date))
+        return list(self.build_session().read_history(date))
 
     def update_history(
         self,
         messages: Sequence[AllMessageValues],
         date: str | None = None,
     ) -> None:
-        self.get_session().update_history(messages, date)
+        self.build_session().update_history(messages, date)
 
     def reset_history(self) -> None:
         self.require_idle("reset history")
-        self.get_session().reset_history()
+        self.build_session().reset_history()
 
-    def start_turn(self, user_input: str) -> AsyncGenerator[dict[str, Any], None]:
+    def start_turn(
+        self,
+        user_input: str,
+        response_format: Mapping[str, Any] | None = None,
+    ) -> AsyncGenerator[dict[str, Any], None]:
         """Acquire the busy flag and return the SSE envelope stream.
+
+        ``response_format`` is optional structured-output JSON passed through to
+        ``KernelSession.turn`` (``None`` / omitted → no structured output).
 
         Raises ``TurnBusyError`` synchronously so callers can map it to HTTP 409
         before starting a streaming response. The caller must ``aclose`` the
@@ -148,13 +146,17 @@ class SessionManager:
         if self._active:
             raise TurnBusyError("Another turn is already active")
         self._active = True
-        return self._stream_turn(user_input)
+        return self._stream_turn(user_input, response_format)
 
-    async def _stream_turn(self, user_input: str) -> AsyncGenerator[dict[str, Any], None]:
+    async def _stream_turn(
+        self,
+        user_input: str,
+        response_format: Mapping[str, Any] | None = None,
+    ) -> AsyncGenerator[dict[str, Any], None]:
         """Yield SSE envelopes for one turn; release busy in ``finally``."""
         try:
-            session = self.get_session()
-            turn_events = session.turn(user_input, response_format=RESPONSE_FORMAT)
+            session = self.build_session()
+            turn_events = session.turn(user_input, response_format=response_format)
             self._turn_events = turn_events
             try:
                 async with aclosing(turn_events):
@@ -203,6 +205,12 @@ def _merge_config(current: LoadedConfig, fields: Mapping[str, Any]) -> LoadedCon
     else:
         provider_params = current.provider.provider_params
 
+    if "workspace_path" in fields:
+        raw_path = fields["workspace_path"]
+        workspace_path = "" if raw_path is None else str(raw_path)
+    else:
+        workspace_path = current.workspace_path
+
     def pick(name: str, current_value: Any) -> Any:
         if name in fields and fields[name] is not None:
             return fields[name]
@@ -226,4 +234,5 @@ def _merge_config(current: LoadedConfig, fields: Mapping[str, Any]) -> LoadedCon
                 "max_context_message_chars", current.policy.max_context_message_chars
             ),
         ),
+        workspace_path=workspace_path,
     )
