@@ -99,16 +99,22 @@ class AgentController:
             self.streaming_text += text if isinstance(text, str) else str(text)
             self.status = _localized("Streaming...")
         elif event_type == "assistant":
-            self.streaming_text = ""
-            self.messages.append(
-                {
-                    "role": "assistant",
-                    "text": data.get("answer", data.get("content", "")),
-                    "choices": data.get("choices", []),
-                    "structured": data.get("structured", False),
-                }
-            )
+            tool_calls = data.get("tool_calls") or []
+            if isinstance(tool_calls, list) and tool_calls:
+                self.messages.append({"role": "tool_call", "data": data})
+                self.status = _localized("Running tool...")
+            else:
+                self.streaming_text = ""
+                self.messages.append(
+                    {
+                        "role": "assistant",
+                        "text": data.get("answer", data.get("content", "")),
+                        "choices": data.get("choices", []),
+                        "structured": data.get("structured", False),
+                    }
+                )
         elif event_type == "tool_call":
+            # Legacy wire type (pre-unify); keep for older servers.
             self.messages.append({"role": "tool_call", "data": data})
             self.status = _localized("Running tool...")
         elif event_type == "tool_result":
@@ -320,7 +326,7 @@ class AgentController:
         _set_store(
             "settings_provider_params", _json_text(config.get("provider_params", {}))
         )
-        _set_store("settings_timeout", str(config.get("command_timeout_seconds", 120)))
+        _set_store("settings_timeout", str(config.get("command_timeout_seconds", 1800)))
         _set_store(
             "settings_output_limit", str(config.get("max_command_output_bytes", 262144))
         )

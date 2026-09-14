@@ -111,7 +111,7 @@ class SseTests(unittest.TestCase):
             event_envelope("chunk"),
             {"type": "delta", "data": {"text": "chunk"}},
         )
-        tool_call = event_envelope(
+        assistant_with_tools = event_envelope(
             {
                 "role": "assistant",
                 "content": "",
@@ -124,7 +124,8 @@ class SseTests(unittest.TestCase):
                 ],
             }
         )
-        self.assertEqual(tool_call["type"], "tool_call")
+        self.assertEqual(assistant_with_tools["type"], "assistant")
+        self.assertEqual(len(assistant_with_tools["data"]["tool_calls"]), 1)
         tool_result = event_envelope({"role": "tool", "content": "ok", "tool_call_id": "1"})
         self.assertEqual(tool_result, {"type": "tool_result", "data": {"content": "ok"}})
 
@@ -221,7 +222,7 @@ class SessionTests(unittest.TestCase):
             self.assertIsNot(first, second)
             self.assertEqual(len(FakeSession.created), 2)
 
-    def test_active_turn_blocks_config_and_workspace(self) -> None:
+    def test_active_turn_blocks_config_and_workspace_writes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = ConfigStore(directory)
             _write_config(store)
@@ -235,6 +236,19 @@ class SessionTests(unittest.TestCase):
                 manager.setup_or_repair_workspace()
             with self.assertRaises(TurnBusyError):
                 manager.create_or_reset_workspace()
+            with self.assertRaises(TurnBusyError):
+                manager.update_system_prompt("x")
+            with self.assertRaises(TurnBusyError):
+                manager.update_memory("x")
+            with self.assertRaises(TurnBusyError):
+                manager.update_history([{"role": "user", "content": "x"}])
+            with self.assertRaises(TurnBusyError):
+                manager.reset_history()
+            # Reads stay allowed while a turn is active.
+            with patch("amnesia_agent_local_server.session.KernelSession", FakeSession):
+                self.assertEqual(manager.read_system_prompt(), "system")
+                self.assertEqual(manager.read_memory(), "memory")
+                self.assertEqual(manager.list_history(), [])
 
     def test_turn_busy_returns_http_409(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -245,6 +259,19 @@ class SessionTests(unittest.TestCase):
             response = client.put("/v1/config", json={"model": "openai/other"})
             self.assertEqual(response.status_code, 409)
             self.assertIn("detail", response.json())
+            for method, path, body in (
+                ("put", "/v1/workspace/system-prompt", {"content": "x"}),
+                ("put", "/v1/workspace/memory", {"content": "x"}),
+                ("put", "/v1/workspace/history", {"messages": []}),
+                ("post", "/v1/workspace/history/reset", None),
+            ):
+                with self.subTest(path=path):
+                    if body is None:
+                        resp = getattr(client, method)(path)
+                    else:
+                        resp = getattr(client, method)(path, json=body)
+                    self.assertEqual(resp.status_code, 409)
+                    self.assertIn("detail", resp.json())
 
     def test_health_and_shutdown_honesty(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

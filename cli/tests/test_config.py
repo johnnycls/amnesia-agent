@@ -52,6 +52,18 @@ class ConfigTests(unittest.TestCase):
             )
             self.assertEqual(config.policy.max_context_message_chars, 1000)
 
+    def test_packaged_default_command_timeout_is_1800(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = ConfigStore(directory)
+            store.setup()
+            raw = json.loads(store.path.read_text(encoding="utf-8"))
+            self.assertEqual(raw["command_timeout_seconds"], 1800)
+            store.path.write_text(
+                json.dumps({**raw, "model": "openai/test"}), encoding="utf-8"
+            )
+            loaded = store.load()
+            self.assertEqual(loaded.policy.command_timeout_seconds, 1800.0)
+
 
 if __name__ == "__main__":
     unittest.main()

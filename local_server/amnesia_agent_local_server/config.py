@@ -23,7 +23,7 @@ DEFAULT_MODEL: Final[str] = ""
 DEFAULT_API_KEY: Final[str] = ""
 DEFAULT_BASE_URL: Final[str] = ""
 DEFAULT_PROVIDER_PARAMS: Final[dict[str, Any]] = {}
-DEFAULT_COMMAND_TIMEOUT_SECONDS: Final[float] = 120.0
+DEFAULT_COMMAND_TIMEOUT_SECONDS: Final[float] = 1800.0
 DEFAULT_MAX_COMMAND_OUTPUT_BYTES: Final[int] = 256 * 1024
 DEFAULT_MAX_CONTEXT_MESSAGE_CHARS: Final[int] = 1000
 # Empty string → kernel default workspace (~/.amnesia-agent).

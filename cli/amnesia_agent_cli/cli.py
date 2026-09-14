@@ -6,6 +6,7 @@ import importlib.metadata
 import subprocess
 import sys
 from collections.abc import Callable
+from contextlib import aclosing
 from typing import TypeVar
 
 from amnesia_agent_kernel import AgentError, ConfigError, KernelSession
@@ -64,8 +65,9 @@ async def _render_turn(
     session: KernelSession, user_input: str, renderer: display.TerminalRenderer
 ) -> None:
     """Run one turn and render its events to the terminal."""
-    async for event in session.turn(user_input):
-        renderer.render(event)
+    async with aclosing(session.turn(user_input)) as events:
+        async for event in events:
+            renderer.render(event)
 
 
 def _run() -> None:

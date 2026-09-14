@@ -13,7 +13,6 @@ from amnesia_agent_kernel import (
     ExecutionPolicy,
     ProviderConfig,
     validate_execution_policy,
-    validate_provider_config,
 )
 
 DEFAULT_CONFIG_DIR = Path.home() / ".amnesia-agent-cli"
@@ -126,12 +125,15 @@ class ConfigStore:
             provider_params=raw.get("provider_params"),
         )
         policy = ExecutionPolicy(
-            command_timeout_seconds=raw.get("command_timeout_seconds", 120.0),
+            command_timeout_seconds=raw.get("command_timeout_seconds", 1800.0),
             max_command_output_bytes=raw.get("max_command_output_bytes", 256 * 1024),
             max_context_message_chars=raw.get("max_context_message_chars", 1000),
         )
+        # Structural checks only — LiteLLM env/credential preflight runs when
+        # KernelSession is constructed, not on config load.
+        if not isinstance(provider.model, str) or not provider.model.strip():
+            raise ConfigError("model must be a non-empty string", path=str(self.path))
         try:
-            validate_provider_config(provider)
             validate_execution_policy(policy)
         except ConfigError as e:
             raise ConfigError(str(e), path=str(self.path)) from e

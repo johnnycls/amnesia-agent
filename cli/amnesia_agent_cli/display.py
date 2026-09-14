@@ -5,9 +5,8 @@ import json
 import logging
 import re
 import sys
+from collections.abc import Mapping
 from typing import Any
-
-from amnesia_agent_kernel.events import AssistantMessage, Delta, ToolResult
 
 MAX_TOOL_LINES: int = 4
 EXIT_PATTERN = re.compile(r"exit code: (-?\d+)")
@@ -39,7 +38,7 @@ _enable_ansi()
 
 
 def _wrap(code: str, text: str) -> str:
-    return f"\x1b[{code}m{text}\x1b[0m" if _ANSI_ENABLED else text
+    return f"[{code}m{text}[0m" if _ANSI_ENABLED else text
 
 
 def _bold(text: str) -> str:
@@ -59,7 +58,7 @@ def _red(text: str) -> str:
 
 
 def _tool_command(call: dict[str, Any]) -> str:
-    """Extract the bash command string from a tool-call argument blob."""
+    """Extract the shell command string from a tool-call argument blob."""
     raw: Any = ""
     try:
         function = call.get("function", {})
@@ -102,7 +101,7 @@ def _print_tool(content: Any) -> None:
 
 
 class TerminalRenderer:
-    """Renders kernel events to the terminal, tracking streamed text."""
+    """Renders kernel turn events to the terminal, tracking streamed text."""
 
     def __init__(self) -> None:
         self._streaming = False
@@ -112,36 +111,37 @@ class TerminalRenderer:
         if self._streaming:
             self._streaming = False
             try:
-                print("\x1b[0m" if _ANSI_ENABLED else "")
+                print("[0m" if _ANSI_ENABLED else "")
             except OSError:
                 logger.debug("Could not reset terminal formatting", exc_info=True)
 
     def render(self, event: Any) -> None:
-        """Render one kernel event using safe fallbacks for malformed data."""
-        if isinstance(event, Delta):
-            text = event.text if isinstance(event.text, str) else str(event.text)
+        """Render one kernel event (``str`` delta or role message mapping)."""
+        if isinstance(event, str):
             if not self._streaming:
                 self._streaming = True
-                print("\x1b[1m" if _ANSI_ENABLED else "", end="", flush=True)
-            print(text, end="", flush=True)
-        elif isinstance(event, AssistantMessage):
-            message = event.message if isinstance(event.message, dict) else {}
-            content = message.get("content")
-            if not isinstance(content, str):
-                content = "" if content is None else str(content)
-            if self._streaming:
-                self._streaming = False
-                print("\x1b[0m" if _ANSI_ENABLED else "")
-            elif content:
-                print(_bold(content))
-            calls = message.get("tool_calls")
-            if not isinstance(calls, list):
-                calls = []
-            for call in calls:
-                if isinstance(call, dict):
-                    print(_dim(f"$ {_tool_command(call)}"))
-        elif isinstance(event, ToolResult):
-            message = event.message if isinstance(event.message, dict) else {}
-            _print_tool(message.get("content"))
-        else:
-            logger.debug("Ignoring unknown render event: %r", event)
+                print("[1m" if _ANSI_ENABLED else "", end="", flush=True)
+            print(event, end="", flush=True)
+            return
+        if isinstance(event, Mapping):
+            role = event.get("role")
+            if role == "assistant":
+                content = event.get("content")
+                if not isinstance(content, str):
+                    content = "" if content is None else str(content)
+                if self._streaming:
+                    self._streaming = False
+                    print("[0m" if _ANSI_ENABLED else "")
+                elif content:
+                    print(_bold(content))
+                calls = event.get("tool_calls")
+                if not isinstance(calls, list):
+                    calls = []
+                for call in calls:
+                    if isinstance(call, dict):
+                        print(_dim(f"$ {_tool_command(call)}"))
+                return
+            if role == "tool":
+                _print_tool(event.get("content"))
+                return
+        logger.debug("Ignoring unknown render event: %r", event)

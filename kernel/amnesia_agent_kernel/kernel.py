@@ -1,6 +1,5 @@
 """Public session API for the kernel."""
 
-import asyncio
 import os
 from collections.abc import AsyncGenerator, Mapping, Sequence
 from contextlib import aclosing
@@ -34,7 +33,7 @@ class KernelSession:
         # not ok, call setup_or_repair_workspace or create_or_reset_workspace
         # before (or instead of) relying on init setup for UX alone.
         self._workspace = Workspace(workspace_root)
-        self._turn_lock = asyncio.Lock()
+        self._turn_open = False
 
     @staticmethod
     def check_workspace(root: str | os.PathLike[str] | None = None) -> bool:
@@ -72,11 +71,24 @@ class KernelSession:
         user_input: str,
         response_format: Mapping[str, Any] | None = None,
     ) -> AsyncGenerator[str | AllMessageValues, None]:
-        """Queue and stream one turn, optionally requesting structured output.
+        """Stream one turn, optionally requesting structured output.
 
         Yields ``str`` deltas and ``AllMessageValues`` assistant/tool messages.
+
+        Callers **must** wrap iteration in ``contextlib.aclosing`` (or call
+        ``aclose``) so the turn slot is released. Only one turn may be open at a
+        time: starting another while a previous turn generator is still open
+        raises ``RuntimeError`` immediately (fail loud) instead of waiting on a
+        wedged lock. Abandoning iteration without ``aclose`` leaves the slot
+        held until the generator is closed or collected.
         """
-        async with self._turn_lock:
+        if self._turn_open:
+            raise RuntimeError(
+                "Another KernelSession.turn is still open; "
+                "close it with contextlib.aclosing before starting a new turn"
+            )
+        self._turn_open = True
+        try:
             events = agent_turn(
                 self.provider,
                 self.policy,
@@ -87,6 +99,8 @@ class KernelSession:
             async with aclosing(events):
                 async for event in events:
                     yield event
+        finally:
+            self._turn_open = False
 
     def read_system_prompt(self) -> str:
         return self._workspace.read_system_prompt()
