@@ -24,7 +24,7 @@ provider = ProviderConfig(
 policy = ExecutionPolicy(
     max_context_message_chars=1000,
 )
-session = KernelSession(provider, policy, workspace_root=None)
+session = KernelSession(provider, policy, workspace_root=None, workspace_mode="open")
 ```
 
 `ProviderConfig` contains only LiteLLM/provider settings. `provider_params` is an
@@ -102,13 +102,23 @@ The workspace implementation is internal to the kernel (`amnesia_agent_kernel.wo
 Controlled read/update operations are available through `KernelSession`; callers do
 not construct or receive a Workspace object from the public API.
 
-On setup, the kernel creates the workspace directory and empty `system_prompt.md` /
-`memory.md` files when they are missing. No seed content ships with the package.
+`KernelSession(..., workspace_mode="open"|"create")` controls how the workspace is
+initialized (default `"open"`). Invalid values raise `ConfigError`.
+
+- `"open"` — create the workspace directory and empty `system_prompt.md` /
+  `memory.md` when missing; existing content is preserved. No seed content ships
+  with the package.
+- `"create"` — wipe any existing directory at the workspace path (including the
+  default `~/.amnesia-agent` when `workspace_root` is `None`), then recreate empty
+  prompt/memory files. Callers that share the default path must keep the default
+  `"open"` mode unless a wipe is intentional.
 
 When both the system prompt and memory are empty, the system message is omitted
 from the provider request. Non-empty values are joined with `\n\n`.
 
 ```python
+session = KernelSession(provider, policy, workspace_root=None, workspace_mode="open")
+
 session.read_system_prompt()
 session.update_system_prompt(text)
 
@@ -120,9 +130,15 @@ session.read_history()                 # newest daily history
 session.read_history("2026-08-28")    # one UTC date
 session.update_history(messages, "2026-08-28")
 session.reset_history()
+session.reset_workspace()              # returns None; wipes root then empty setup
 ```
 
-`reset_system_prompt`, `reset_memory`, and `reset_workspace` have been removed.
+`reset_workspace()` removes the entire workspace root directory (if present), then
+recreates empty `system_prompt.md` / `memory.md`. A missing root is treated as
+already clear; a non-directory path raises `WorkspaceError`. **Breaking:**
+`reset_workspace` returns to the public API and returns `None` (no value).
+
+`reset_system_prompt` and `reset_memory` remain removed.
 
 History input and persisted records are validated as role messages only (`system`,
 `user`, `assistant`, `tool`). Empty valid sequences remove a history file;

@@ -3,14 +3,17 @@
 import asyncio
 import os
 from collections.abc import AsyncIterator, Mapping, Sequence
-from typing import Any
+from typing import Any, Literal
 
 from litellm.types.llms.openai import AllMessageValues
 
 from amnesia_agent_kernel.agent import agent_turn
+from amnesia_agent_kernel.errors import ConfigError
 from amnesia_agent_kernel.provider import validate_execution_policy, validate_provider_config
 from amnesia_agent_kernel.types import ExecutionPolicy, ProviderConfig
 from amnesia_agent_kernel.workspace import Workspace
+
+WorkspaceMode = Literal["open", "create"]
 
 
 class KernelSession:
@@ -21,13 +24,18 @@ class KernelSession:
         provider: ProviderConfig,
         policy: ExecutionPolicy | None = None,
         workspace_root: str | os.PathLike[str] | None = None,
+        workspace_mode: WorkspaceMode = "open",
     ) -> None:
         validate_provider_config(provider)
         selected_policy = policy or ExecutionPolicy()
         validate_execution_policy(selected_policy)
+        if workspace_mode not in ("open", "create"):
+            raise ConfigError(
+                f"Invalid workspace_mode {workspace_mode!r}; expected 'open' or 'create'"
+            )
         self.provider = provider.snapshot()
         self.policy = selected_policy
-        self._workspace = Workspace(workspace_root)
+        self._workspace = Workspace(workspace_root, mode=workspace_mode)
         self._turn_lock = asyncio.Lock()
 
     async def turn(
@@ -72,3 +80,7 @@ class KernelSession:
 
     def reset_history(self) -> None:
         self._workspace.reset_history()
+
+    def reset_workspace(self) -> None:
+        """Wipe the workspace root and recreate empty prompt/memory files."""
+        self._workspace.reset_workspace()
