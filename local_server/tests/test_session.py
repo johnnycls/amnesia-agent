@@ -31,6 +31,8 @@ class FakeSession:
         type(self).created.append(self)
 
     async def turn(self, text: str, response_format: object = None):
+        self.turn_text = text
+        self.turn_response_format = response_format
         yield '{"answer":"'
         yield {
             "role": "assistant",
@@ -269,6 +271,104 @@ class SessionTests(unittest.TestCase):
             self.assertEqual(shutdown.status_code, 200)
             self.assertEqual(shutdown.json(), {"shutting_down": True})
             self.assertTrue(app.state.uvicorn_server.should_exit)
+
+    def test_start_turn_passes_response_format_none_by_default(self) -> None:
+        async def run() -> None:
+            with tempfile.TemporaryDirectory() as directory:
+                store = ConfigStore(directory)
+                _write_config(store)
+                manager = SessionManager(store)
+                with patch("amnesia_agent_local_server.session.KernelSession", FakeSession):
+                    events_agen = manager.start_turn("hello")
+                    async with aclosing(events_agen):
+                        async for _event in events_agen:
+                            pass
+                self.assertEqual(len(FakeSession.created), 1)
+                self.assertIsNone(FakeSession.created[0].turn_response_format)
+
+        asyncio.run(run())
+
+    def test_start_turn_passes_response_format_through(self) -> None:
+        fmt = {"type": "json_object"}
+
+        async def run() -> None:
+            with tempfile.TemporaryDirectory() as directory:
+                store = ConfigStore(directory)
+                _write_config(store)
+                manager = SessionManager(store)
+                with patch("amnesia_agent_local_server.session.KernelSession", FakeSession):
+                    events_agen = manager.start_turn("hello", response_format=fmt)
+                    async with aclosing(events_agen):
+                        async for _event in events_agen:
+                            pass
+                self.assertEqual(FakeSession.created[0].turn_response_format, fmt)
+
+        asyncio.run(run())
+
+    def test_turn_http_omitted_response_format_is_none(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = ConfigStore(directory)
+            _write_config(store)
+            client = TestClient(create_app(store))
+            with patch("amnesia_agent_local_server.session.KernelSession", FakeSession):
+                response = client.post("/v1/turn", json={"text": "hi"})
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(len(FakeSession.created), 1)
+            self.assertIsNone(FakeSession.created[0].turn_response_format)
+
+    def test_turn_http_null_response_format_is_none(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = ConfigStore(directory)
+            _write_config(store)
+            client = TestClient(create_app(store))
+            with patch("amnesia_agent_local_server.session.KernelSession", FakeSession):
+                response = client.post(
+                    "/v1/turn", json={"text": "hi", "response_format": None}
+                )
+            self.assertEqual(response.status_code, 200)
+            self.assertIsNone(FakeSession.created[0].turn_response_format)
+
+    def test_turn_http_passes_response_format_object(self) -> None:
+        fmt = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "answer_with_choices",
+                "strict": True,
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "answer": {"type": "string"},
+                        "choices": {"type": "array", "items": {"type": "string"}},
+                    },
+                    "required": ["answer", "choices"],
+                    "additionalProperties": False,
+                },
+            },
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            store = ConfigStore(directory)
+            _write_config(store)
+            client = TestClient(create_app(store))
+            with patch("amnesia_agent_local_server.session.KernelSession", FakeSession):
+                response = client.post(
+                    "/v1/turn", json={"text": "hi", "response_format": fmt}
+                )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(FakeSession.created[0].turn_response_format, fmt)
+
+    def test_turn_http_rejects_wrong_response_format_type(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = ConfigStore(directory)
+            _write_config(store)
+            client = TestClient(create_app(store), raise_server_exceptions=False)
+            for bad in ("sneaky", ["not", "an", "object"], 42):
+                with self.subTest(bad=bad):
+                    response = client.post(
+                        "/v1/turn", json={"text": "hi", "response_format": bad}
+                    )
+                    self.assertEqual(response.status_code, 422)
+                    self.assertIn("detail", response.json())
+
 
 
 if __name__ == "__main__":

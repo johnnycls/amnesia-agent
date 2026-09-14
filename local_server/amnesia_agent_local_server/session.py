@@ -17,24 +17,6 @@ from amnesia_agent_local_server.config import (
 )
 from amnesia_agent_local_server.sse import event_envelope
 
-# Structured output requested for desktop frontends (answer + choice chips).
-RESPONSE_FORMAT: dict[str, Any] = {
-    "type": "json_schema",
-    "json_schema": {
-        "name": "answer_with_choices",
-        "strict": True,
-        "schema": {
-            "type": "object",
-            "properties": {
-                "answer": {"type": "string"},
-                "choices": {"type": "array", "items": {"type": "string"}},
-            },
-            "required": ["answer", "choices"],
-            "additionalProperties": False,
-        },
-    },
-}
-
 
 class TurnBusyError(Exception):
     """Raised when an operation cannot run while a turn is active."""
@@ -146,8 +128,15 @@ class SessionManager:
         self.require_idle("reset history")
         self.build_session().reset_history()
 
-    def start_turn(self, user_input: str) -> AsyncGenerator[dict[str, Any], None]:
+    def start_turn(
+        self,
+        user_input: str,
+        response_format: Mapping[str, Any] | None = None,
+    ) -> AsyncGenerator[dict[str, Any], None]:
         """Acquire the busy flag and return the SSE envelope stream.
+
+        ``response_format`` is optional structured-output JSON passed through to
+        ``KernelSession.turn`` (``None`` / omitted → no structured output).
 
         Raises ``TurnBusyError`` synchronously so callers can map it to HTTP 409
         before starting a streaming response. The caller must ``aclose`` the
@@ -157,13 +146,17 @@ class SessionManager:
         if self._active:
             raise TurnBusyError("Another turn is already active")
         self._active = True
-        return self._stream_turn(user_input)
+        return self._stream_turn(user_input, response_format)
 
-    async def _stream_turn(self, user_input: str) -> AsyncGenerator[dict[str, Any], None]:
+    async def _stream_turn(
+        self,
+        user_input: str,
+        response_format: Mapping[str, Any] | None = None,
+    ) -> AsyncGenerator[dict[str, Any], None]:
         """Yield SSE envelopes for one turn; release busy in ``finally``."""
         try:
             session = self.build_session()
-            turn_events = session.turn(user_input, response_format=RESPONSE_FORMAT)
+            turn_events = session.turn(user_input, response_format=response_format)
             self._turn_events = turn_events
             try:
                 async with aclosing(turn_events):

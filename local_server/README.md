@@ -92,8 +92,13 @@ session from the latest config (including `workspace_path`).
 ### Turn (SSE)
 
 ```text
-POST /v1/turn   {"text":"..."}
+POST /v1/turn   {"text":"...","response_format":{...}|null}
 ```
+
+Body: required `text` (non-empty string); optional `response_format` (JSON object
+or `null` / omitted). Wrong types fail loud with **422**. When omitted or
+`null`, the server passes `None` to `KernelSession.turn` (no structured output).
+When provided, the object is forwarded unchanged to the kernel.
 
 Server-Sent Events stream. Kernel `turn` yields `str` deltas and role messages
 (`AllMessageValues`); the server maps them as:
@@ -108,7 +113,7 @@ data: {"type":"error","data":{"error_type":"...","message":"..."}}
 ```
 
 - `assistant` events parse structured JSON (`answer` / `choices`) when content
-  matches the requested schema; otherwise `structured` is false.
+  matches a schema the client requested; otherwise `structured` is false.
 - Malformed assistant/tool content (non-string content, non-list `tool_calls`)
   and unknown kernel event shapes fail loud as an `error` envelope
   (`ServerError`).
@@ -121,8 +126,28 @@ data: {"type":"error","data":{"error_type":"...","message":"..."}}
   That is **best-effort**: local streaming stops and the HTTP connection to the
   provider is asked to close, but providers may still finish generating or bill
   tokens. There is no hard guarantee of immediate upstream abort.
-- Turns request structured output (`answer_with_choices`) when the provider
-  supports it.
+- The server does **not** auto-apply a structured-output schema. Clients that
+  want choice chips (Electron / Ren'Py) must send `response_format` themselves.
+  Example schema to copy:
+
+```json
+{
+  "type": "json_schema",
+  "json_schema": {
+    "name": "answer_with_choices",
+    "strict": true,
+    "schema": {
+      "type": "object",
+      "properties": {
+        "answer": {"type": "string"},
+        "choices": {"type": "array", "items": {"type": "string"}}
+      },
+      "required": ["answer", "choices"],
+      "additionalProperties": false
+    }
+  }
+}
+```
 
 ### Workspace
 
@@ -209,10 +234,16 @@ Relative to the pre-rewrite `service.py` / monolithic `app.py` layout:
 6. **`workspace_path`** — local_server config field (empty = kernel default).
    Workspace HTTP and turns use the configured path. Sessions are not cached
    across turns (fresh `KernelSession` each time from latest config).
+7. **`POST /v1/turn` `response_format`** — optional client-supplied structured
+   output. The server no longer always requests `answer_with_choices`. Clients
+   that relied on server-side structured output must send `response_format`
+   themselves (see Turn section example).
 
 **Frontends (Electron, Ren'Py) must follow these HTTP changes.** Soft prompt /
 memory reset URLs and any assumption that history cannot be updated over HTTP
-are obsolete.
+are obsolete. Clients that previously assumed every turn used
+`answer_with_choices` must now pass that schema (or another) as
+`response_format`.
 
 ## Troubleshooting
 
