@@ -1,4 +1,4 @@
-"""SessionManager: config-backed KernelSession construction and turn busy flag."""
+"""SessionManager: config-backed KernelSession construction and path-keyed turns."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from contextlib import aclosing
 from typing import Any
 
 from amnesia_agent_kernel import AgentError, ExecutionPolicy, KernelSession, ProviderConfig
+from amnesia_agent_kernel.workspace.paths import resolve_root
 from litellm.types.llms.openai import AllMessageValues
 
 from amnesia_agent_local_server.config import (
@@ -22,12 +23,24 @@ class TurnBusyError(Exception):
     """Raised when an operation cannot run while a turn is active."""
 
 
+def resolved_workspace_key(workspace_path: str | None) -> str:
+    """Absolute workspace path string used as the turn lock key.
+
+    Matches kernel ``resolve_root`` after request normalization: omit / ``None`` /
+    empty → default ``~/.amnesia-agent`` so those request forms share one lock.
+    """
+    return str(resolve_root(resolve_request_workspace_path(workspace_path)))
+
+
 class SessionManager:
-    """Own config loading, fresh KernelSession construction, and the turn busy flag.
+    """Own config loading, fresh KernelSession construction, and path-keyed turns.
 
     Strategy A: do **not** cache ``KernelSession`` across turns. Every turn and
     every workspace read/update builds a new session from the latest config.
     Workspace root comes from the per-request ``workspace_path`` (not config).
+
+    Concurrency: one active turn per resolved workspace path. Different paths
+    may run turns in parallel. Config update/reset requires no active turns.
     """
 
     def __init__(
@@ -38,22 +51,36 @@ class SessionManager:
         self.config_store = config_store or ConfigStore()
         self.instance_id = instance_id
         self.config_store.setup()
-        self._active = False
-        self._turn_events: AsyncIterator[Any] | None = None
+        # Path key → in-flight turn iterator (None until the kernel stream starts).
+        self._active: dict[str, AsyncIterator[Any] | None] = {}
 
     @property
     def active_turn(self) -> bool:
-        return self._active
+        """True when any workspace currently has an active turn."""
+        return bool(self._active)
+
+    @property
+    def active_workspaces(self) -> list[str]:
+        """Resolved workspace path keys with an active turn (sorted)."""
+        return sorted(self._active)
 
     def health(self) -> dict[str, Any]:
         return {
             "status": "ok",
-            "active_turn": self._active,
+            "active_turn": self.active_turn,
+            "active_workspaces": self.active_workspaces,
             "api_version": "v1",
             "instance_id": self.instance_id,
         }
 
-    def require_idle(self, action: str) -> None:
+    def require_idle_for_path(self, workspace_path: str | None, action: str) -> None:
+        """Raise if the resolved workspace path already has an active turn."""
+        key = resolved_workspace_key(workspace_path)
+        if key in self._active:
+            raise TurnBusyError(f"Cannot {action} during an active turn")
+
+    def require_no_active_turns(self, action: str) -> None:
+        """Raise if any workspace has an active turn (config mutations)."""
         if self._active:
             raise TurnBusyError(f"Cannot {action} during an active turn")
 
@@ -79,34 +106,32 @@ class SessionManager:
 
     def update_config(self, fields: Mapping[str, Any]) -> dict[str, Any]:
         """Apply a partial config update; omit keys to keep current values."""
-        self.require_idle("change configuration")
+        self.require_no_active_turns("change configuration")
         current = self.config_store.load()
         updated = _merge_config(current, fields)
         self.config_store.save(updated)
         return public_config(updated)
 
     def reset_config(self) -> dict[str, Any]:
-        self.require_idle("reset configuration")
+        self.require_no_active_turns("reset configuration")
         return public_config(self.config_store.reset())
 
     def check_workspace(self, workspace_path: str | None = None) -> bool:
         return KernelSession.check_workspace(resolve_request_workspace_path(workspace_path))
 
     def setup_or_repair_workspace(self, workspace_path: str | None = None) -> None:
-        self.require_idle("setup or repair workspace")
+        self.require_idle_for_path(workspace_path, "setup or repair workspace")
         KernelSession.setup_or_repair_workspace(resolve_request_workspace_path(workspace_path))
 
     def create_or_reset_workspace(self, workspace_path: str | None = None) -> None:
-        self.require_idle("create or reset workspace")
+        self.require_idle_for_path(workspace_path, "create or reset workspace")
         KernelSession.create_or_reset_workspace(resolve_request_workspace_path(workspace_path))
 
     def read_system_prompt(self, workspace_path: str | None = None) -> str:
         return self.build_session(workspace_path=workspace_path).read_system_prompt()
 
-    def update_system_prompt(
-        self, content: str, workspace_path: str | None = None
-    ) -> str:
-        self.require_idle("update system prompt")
+    def update_system_prompt(self, content: str, workspace_path: str | None = None) -> str:
+        self.require_idle_for_path(workspace_path, "update system prompt")
         self.build_session(workspace_path=workspace_path).update_system_prompt(content)
         return content
 
@@ -114,7 +139,7 @@ class SessionManager:
         return self.build_session(workspace_path=workspace_path).read_memory()
 
     def update_memory(self, content: str, workspace_path: str | None = None) -> str:
-        self.require_idle("update memory")
+        self.require_idle_for_path(workspace_path, "update memory")
         self.build_session(workspace_path=workspace_path).update_memory(content)
         return content
 
@@ -134,11 +159,11 @@ class SessionManager:
         date: str | None = None,
         workspace_path: str | None = None,
     ) -> None:
-        self.require_idle("update history")
+        self.require_idle_for_path(workspace_path, "update history")
         self.build_session(workspace_path=workspace_path).update_history(messages, date)
 
     def reset_history(self, workspace_path: str | None = None) -> None:
-        self.require_idle("reset history")
+        self.require_idle_for_path(workspace_path, "reset history")
         self.build_session(workspace_path=workspace_path).reset_history()
 
     def start_turn(
@@ -147,7 +172,7 @@ class SessionManager:
         response_format: Mapping[str, Any] | None = None,
         workspace_path: str | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
-        """Acquire the busy flag and return the SSE envelope stream.
+        """Acquire the path slot and return the SSE envelope stream.
 
         ``response_format`` is optional structured-output JSON passed through to
         ``KernelSession.turn`` (``None`` / omitted → no structured output).
@@ -155,28 +180,31 @@ class SessionManager:
         ``workspace_path`` is optional; omit/empty → kernel default workspace.
 
         Raises ``TurnBusyError`` synchronously so callers can map it to HTTP 409
-        before starting a streaming response. The caller must ``aclose`` the
-        returned generator (e.g. via ``contextlib.aclosing``) so the busy flag
-        is released on disconnect or cancel.
+        before starting a streaming response when that resolved path is busy.
+        The caller must ``aclose`` the returned generator (e.g. via
+        ``contextlib.aclosing``) so the path slot is released on disconnect or
+        cancel.
 
-        Concurrency remains a **global** single-turn busy flag (not path-keyed).
+        Different resolved workspace paths may run turns concurrently.
         """
-        if self._active:
-            raise TurnBusyError("Another turn is already active")
-        self._active = True
-        return self._stream_turn(user_input, response_format, workspace_path)
+        key = resolved_workspace_key(workspace_path)
+        if key in self._active:
+            raise TurnBusyError("Another turn is already active for this workspace")
+        self._active[key] = None
+        return self._stream_turn(user_input, response_format, workspace_path, key)
 
     async def _stream_turn(
         self,
         user_input: str,
-        response_format: Mapping[str, Any] | None = None,
-        workspace_path: str | None = None,
+        response_format: Mapping[str, Any] | None,
+        workspace_path: str | None,
+        key: str,
     ) -> AsyncGenerator[dict[str, Any], None]:
-        """Yield SSE envelopes for one turn; release busy in ``finally``."""
+        """Yield SSE envelopes for one turn; release the path slot in ``finally``."""
         try:
             session = self.build_session(workspace_path=workspace_path)
             turn_events = session.turn(user_input, response_format=response_format)
-            self._turn_events = turn_events
+            self._active[key] = turn_events
             try:
                 async with aclosing(turn_events):
                     async for event in turn_events:
@@ -193,16 +221,15 @@ class SessionManager:
                     "data": {"error_type": "ServerError", "message": str(error)},
                 }
         finally:
-            self._turn_events = None
-            self._active = False
+            self._active.pop(key, None)
 
     async def cancel_active_turn(self) -> None:
-        """Best-effort aclose of the in-flight kernel turn iterator, if any."""
-        turn_events = self._turn_events
-        if turn_events is not None:
-            aclose = getattr(turn_events, "aclose", None)
-            if callable(aclose):
-                await aclose()
+        """Best-effort aclose of every in-flight kernel turn iterator."""
+        for turn_events in list(self._active.values()):
+            if turn_events is not None:
+                aclose = getattr(turn_events, "aclose", None)
+                if callable(aclose):
+                    await aclose()
 
 
 def _merge_config(current: LoadedConfig, fields: Mapping[str, Any]) -> LoadedConfig:

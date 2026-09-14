@@ -83,6 +83,31 @@ class ClosingFakeSession(FakeSession):
             self.closed = True
 
 
+class HoldingFakeSession(FakeSession):
+    """Turn that waits on an Event so tests can hold the path slot open."""
+
+    gates: ClassVar[dict[str, asyncio.Event]] = {}
+
+    def __init__(
+        self,
+        provider: object,
+        policy: object,
+        workspace_root: object = None,
+    ) -> None:
+        super().__init__(provider, policy, workspace_root)
+        key = str(workspace_root) if workspace_root is not None else "__default__"
+        self._gate_key = key
+        if key not in type(self).gates:
+            type(self).gates[key] = asyncio.Event()
+
+    async def turn(self, text: str, response_format: object = None):
+        self.turn_text = text
+        self.turn_response_format = response_format
+        yield "held"
+        await type(self).gates[self._gate_key].wait()
+        yield {"role": "assistant", "content": f"done:{text}"}
+
+
 def _write_config(store: ConfigStore, extra: dict[str, object] | None = None) -> None:
     store.path.parent.mkdir(parents=True, exist_ok=True)
     payload: dict[str, object] = {"model": "openai/test", "api_key": "test-key"}
@@ -148,6 +173,8 @@ class SessionTests(unittest.TestCase):
     def setUp(self) -> None:
         FakeSession.created = []
         ClosingFakeSession.created = []
+        HoldingFakeSession.created = []
+        HoldingFakeSession.gates = {}
 
     def test_stream_turn_emits_done_and_releases_slot(self) -> None:
         async def run() -> list[dict[str, object]]:
@@ -173,9 +200,7 @@ class SessionTests(unittest.TestCase):
                 store = ConfigStore(directory)
                 _write_config(store)
                 manager = SessionManager(store)
-                with patch(
-                    "amnesia_agent_local_server.session.KernelSession", ClosingFakeSession
-                ):
+                with patch("amnesia_agent_local_server.session.KernelSession", ClosingFakeSession):
                     events_agen = manager.start_turn("hello")
 
                     async def consume() -> None:
@@ -227,7 +252,10 @@ class SessionTests(unittest.TestCase):
             store = ConfigStore(directory)
             _write_config(store)
             manager = SessionManager(store)
-            manager._active = True
+            from amnesia_agent_local_server.session import resolved_workspace_key
+
+            default_key = resolved_workspace_key(None)
+            manager._active[default_key] = None
             with self.assertRaises(TurnBusyError):
                 manager.update_config({"model": "openai/new"})
             with self.assertRaises(TurnBusyError):
@@ -253,7 +281,9 @@ class SessionTests(unittest.TestCase):
             store = ConfigStore(directory)
             _write_config(store)
             client = TestClient(create_app(store), raise_server_exceptions=False)
-            client.app.state.session._active = True
+            from amnesia_agent_local_server.session import resolved_workspace_key
+
+            client.app.state.session._active[resolved_workspace_key(None)] = None
             response = client.put("/v1/config", json={"model": "openai/other"})
             self.assertEqual(response.status_code, 409)
             self.assertIn("detail", response.json())
@@ -283,6 +313,7 @@ class SessionTests(unittest.TestCase):
                 {
                     "status": "ok",
                     "active_turn": False,
+                    "active_workspaces": [],
                     "api_version": "v1",
                     "instance_id": "abc",
                 },
@@ -347,9 +378,7 @@ class SessionTests(unittest.TestCase):
             _write_config(store)
             client = TestClient(create_app(store))
             with patch("amnesia_agent_local_server.session.KernelSession", FakeSession):
-                response = client.post(
-                    "/v1/turn", json={"text": "hi", "response_format": None}
-                )
+                response = client.post("/v1/turn", json={"text": "hi", "response_format": None})
             self.assertEqual(response.status_code, 200)
             self.assertIsNone(FakeSession.created[0].turn_response_format)
 
@@ -375,9 +404,7 @@ class SessionTests(unittest.TestCase):
             _write_config(store)
             client = TestClient(create_app(store))
             with patch("amnesia_agent_local_server.session.KernelSession", FakeSession):
-                response = client.post(
-                    "/v1/turn", json={"text": "hi", "response_format": fmt}
-                )
+                response = client.post("/v1/turn", json={"text": "hi", "response_format": fmt})
             self.assertEqual(response.status_code, 200)
             self.assertEqual(FakeSession.created[0].turn_response_format, fmt)
 
@@ -388,9 +415,7 @@ class SessionTests(unittest.TestCase):
             client = TestClient(create_app(store), raise_server_exceptions=False)
             for bad in ("sneaky", ["not", "an", "object"], 42):
                 with self.subTest(bad=bad):
-                    response = client.post(
-                        "/v1/turn", json={"text": "hi", "response_format": bad}
-                    )
+                    response = client.post("/v1/turn", json={"text": "hi", "response_format": bad})
                     self.assertEqual(response.status_code, 422)
                     self.assertIn("detail", response.json())
 
@@ -424,12 +449,149 @@ class SessionTests(unittest.TestCase):
             _write_config(store)
             client = TestClient(create_app(store))
             with patch("amnesia_agent_local_server.session.KernelSession", FakeSession):
-                response = client.post(
-                    "/v1/turn", json={"text": "hi", "workspace_path": ""}
-                )
+                response = client.post("/v1/turn", json={"text": "hi", "workspace_path": ""})
             self.assertEqual(response.status_code, 200)
             self.assertIsNone(FakeSession.created[0].workspace_root)
 
+    def test_resolved_workspace_key_collides_default_forms(self) -> None:
+        from amnesia_agent_kernel.workspace.paths import DEFAULT_WORKSPACE
+
+        from amnesia_agent_local_server.session import resolved_workspace_key
+
+        default = str(DEFAULT_WORKSPACE)
+        self.assertEqual(resolved_workspace_key(None), default)
+        self.assertEqual(resolved_workspace_key(""), default)
+        self.assertEqual(resolved_workspace_key(None), resolved_workspace_key(""))
+
+    def test_same_path_second_turn_raises_409(self) -> None:
+        async def run() -> None:
+            with tempfile.TemporaryDirectory() as directory:
+                store = ConfigStore(directory)
+                custom = str(Path(directory) / "ws")
+                _write_config(store)
+                manager = SessionManager(store)
+                with patch("amnesia_agent_local_server.session.KernelSession", FakeSession):
+                    first = manager.start_turn("one", workspace_path=custom)
+                    try:
+                        with self.assertRaises(TurnBusyError):
+                            manager.start_turn("two", workspace_path=custom)
+                    finally:
+                        async with aclosing(first):
+                            async for _event in first:
+                                pass
+                    self.assertFalse(manager.active_turn)
+
+        asyncio.run(run())
+
+    def test_default_path_forms_share_one_slot(self) -> None:
+        async def run() -> None:
+            with tempfile.TemporaryDirectory() as directory:
+                store = ConfigStore(directory)
+                _write_config(store)
+                manager = SessionManager(store)
+                with patch("amnesia_agent_local_server.session.KernelSession", FakeSession):
+                    first = manager.start_turn("one")  # None → default
+                    try:
+                        with self.assertRaises(TurnBusyError):
+                            manager.start_turn("two", workspace_path="")
+                        with self.assertRaises(TurnBusyError):
+                            manager.start_turn("three", workspace_path=None)
+                    finally:
+                        async with aclosing(first):
+                            async for _event in first:
+                                pass
+
+        asyncio.run(run())
+
+    def test_different_paths_can_run_turns_in_parallel(self) -> None:
+        async def run() -> None:
+            from amnesia_agent_local_server.session import resolved_workspace_key
+
+            with tempfile.TemporaryDirectory() as directory:
+                store = ConfigStore(directory)
+                path_a = str(Path(directory) / "a")
+                path_b = str(Path(directory) / "b")
+                _write_config(store)
+                manager = SessionManager(store)
+                with patch("amnesia_agent_local_server.session.KernelSession", HoldingFakeSession):
+                    turn_a = manager.start_turn("a", workspace_path=path_a)
+                    turn_b = manager.start_turn("b", workspace_path=path_b)
+                    self.assertTrue(manager.active_turn)
+                    self.assertEqual(
+                        set(manager.active_workspaces),
+                        {
+                            resolved_workspace_key(path_a),
+                            resolved_workspace_key(path_b),
+                        },
+                    )
+
+                    both_held = asyncio.Event()
+                    holding = {"n": 0}
+
+                    async def consume(agen: object) -> None:
+                        async with aclosing(agen):  # type: ignore[arg-type]
+                            holding["n"] += 1
+                            if holding["n"] == 2:
+                                both_held.set()
+                            async for _event in agen:  # type: ignore[attr-defined]
+                                pass
+
+                    task_a = asyncio.create_task(consume(turn_a))
+                    task_b = asyncio.create_task(consume(turn_b))
+                    await both_held.wait()
+                    await asyncio.sleep(0)
+                    HoldingFakeSession.gates[path_a].set()
+                    HoldingFakeSession.gates[path_b].set()
+                    await asyncio.gather(task_a, task_b)
+                    self.assertFalse(manager.active_turn)
+                    self.assertEqual(manager.active_workspaces, [])
+                    self.assertEqual(len(HoldingFakeSession.created), 2)
+
+        asyncio.run(run())
+
+    def test_write_on_busy_path_409_other_path_ok(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = ConfigStore(directory)
+            busy = str(Path(directory) / "busy")
+            idle = str(Path(directory) / "idle")
+            _write_config(store)
+            manager = SessionManager(store)
+            from amnesia_agent_local_server.session import resolved_workspace_key
+
+            manager._active[resolved_workspace_key(busy)] = None
+            with self.assertRaises(TurnBusyError):
+                manager.update_memory("x", workspace_path=busy)
+            with self.assertRaises(TurnBusyError):
+                manager.update_system_prompt("x", workspace_path=busy)
+            with self.assertRaises(TurnBusyError):
+                manager.setup_or_repair_workspace(busy)
+            with self.assertRaises(TurnBusyError):
+                manager.create_or_reset_workspace(busy)
+            with self.assertRaises(TurnBusyError):
+                manager.reset_history(busy)
+            with patch("amnesia_agent_local_server.session.KernelSession", FakeSession):
+                # Write on a different path is allowed.
+                self.assertEqual(manager.update_memory("y", workspace_path=idle), "y")
+                self.assertEqual(manager.update_system_prompt("z", workspace_path=idle), "z")
+            # Config blocked while any path busy.
+            with self.assertRaises(TurnBusyError):
+                manager.update_config({"model": "openai/new"})
+            with self.assertRaises(TurnBusyError):
+                manager.reset_config()
+
+    def test_health_lists_active_workspaces(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = ConfigStore(directory)
+            _write_config(store)
+            app = create_app(store, instance_id="xyz")
+            from amnesia_agent_local_server.session import resolved_workspace_key
+
+            key = resolved_workspace_key(str(Path(directory) / "ws"))
+            app.state.session._active[key] = None
+            client = TestClient(app)
+            health = client.get("/v1/health").json()
+            self.assertTrue(health["active_turn"])
+            self.assertEqual(health["active_workspaces"], [key])
 
 
 if __name__ == "__main__":

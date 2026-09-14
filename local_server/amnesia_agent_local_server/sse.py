@@ -46,9 +46,7 @@ def _assistant_data(message: Mapping[str, Any]) -> dict[str, Any]:
     else:
         calls = message["tool_calls"]
         if not isinstance(calls, list):
-            raise ValueError(
-                f"Assistant tool_calls must be a list, got {type(calls).__name__}"
-            )
+            raise ValueError(f"Assistant tool_calls must be a list, got {type(calls).__name__}")
     data: dict[str, Any] = {"content": content, "tool_calls": calls}
     if not calls:
         structured = _parse_structured_answer(content)
