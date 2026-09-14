@@ -20,6 +20,7 @@ class TurnRequest(BaseModel):
 
     text: str = Field(min_length=1)
     response_format: dict[str, Any] | None = None
+    workspace_path: str | None = None
 
 
 @router.post("/turn")
@@ -29,6 +30,7 @@ async def turn(turn_request: TurnRequest, request: Request) -> StreamingResponse
     events = session.start_turn(
         turn_request.text,
         response_format=turn_request.response_format,
+        workspace_path=turn_request.workspace_path,
     )
 
     async def stream() -> AsyncIterator[str]:
