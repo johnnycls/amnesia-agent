@@ -24,13 +24,17 @@ provider = ProviderConfig(
 policy = ExecutionPolicy(
     max_context_message_chars=1000,
 )
-session = KernelSession(provider, policy)
+session = KernelSession(provider, policy, workspace_root=None)
 ```
 
-`ProviderConfig` contains only LiteLLM/provider settings. `ExecutionPolicy` contains
-kernel execution and context limits. Its conservative defaults are:
+`ProviderConfig` contains only LiteLLM/provider settings. `provider_params` is an
+optional mapping passed through to LiteLLM without scalar or reserved-key
+filtering; kernel-controlled request fields (`model`, turn kwargs, `api_key`,
+`api_base`) still win when building a request.
 
-- 120-second command timeout
+`ExecutionPolicy` contains kernel execution and context limits. Its defaults are:
+
+- 1800-second command timeout
 - 256 KiB combined command output
 - 1000 characters for non-user context messages
 
@@ -79,47 +83,47 @@ executed concurrently. Command timeout and output-limit failures are returned as
 tool-result text so the model can recover.
 The process group is terminated on timeout or output overflow.
 
-Cancellation re-raises `asyncio.CancelledError`, after persisting partial assistant
-text and a `turn_cancelled` history event when possible.
+History stores role messages only. Provider failures append a user message such as
+`error: ProviderError: ...` and then raise. Cancellation re-raises
+`asyncio.CancelledError` after persisting partial assistant text (when present)
+and a user message `user interrupted` when possible. Prior daily history is not
+auto-replayed into the model context; only the current turn's messages are.
 
 ## Workspace operations
 
-The workspace implementation is internal to the kernel. Controlled read, update,
-and reset operations are available through `KernelSession`; callers do not
-construct or receive a Workspace object.
+The workspace implementation is internal to the kernel (`amnesia_agent_kernel.workspace`).
+Controlled read/update operations are available through `KernelSession`; callers do
+not construct or receive a Workspace object from the public API.
+
+On setup, the kernel creates the workspace directory and empty `system_prompt.md` /
+`memory.md` files when they are missing. There are no packaged seed prompts.
+
+When both the system prompt and memory are empty, the system message is omitted
+from the provider request. Non-empty values are joined with `\n\n`.
 
 ```python
 session.read_system_prompt()
 session.update_system_prompt(text)
-session.reset_system_prompt()
 
 session.read_memory()
 session.update_memory(text)
-session.reset_memory()
 
 session.list_history()                 # newest ISO dates first
 session.read_history()                 # newest daily history
 session.read_history("2026-08-28")    # one UTC date
 session.update_history(messages, "2026-08-28")
 session.reset_history()
-session.reset_workspace()
 ```
 
-History input and persisted records are validated. Empty valid sequences remove a
-history file; malformed inputs raise `WorkspaceError` without deleting it.
+`reset_system_prompt`, `reset_memory`, and `reset_workspace` have been removed.
+
+History input and persisted records are validated as role messages only (`system`,
+`user`, `assistant`, `tool`). Empty valid sequences remove a history file;
+malformed inputs raise `WorkspaceError` without deleting it. Kind/sidecar history
+events are no longer accepted.
 
 The bash tool schema is a kernel constant. It is not copied to the workspace and
 cannot be changed through workspace files.
-
-### Packaged data
-
-The kernel ships two seed files that initialize the workspace on first use:
-
-- `data/system_prompt.md` — the default system prompt (covers agent identity,
-  platform detection, tool usage, memory management, and context budget).
-- `data/memory.md` — a blank starter memory file.
-
-These are copied into `~/.amnesia-agent/` when the workspace is first created.
 
 ## Error classes
 
@@ -130,7 +134,7 @@ The kernel uses typed `AgentError` subclasses for expected failures:
 | `ConfigError` | Invalid or missing provider/execution configuration |
 | `WorkspaceError` | Filesystem or validation errors in the workspace |
 | `ProviderError` | LiteLLM or upstream provider failures |
-| `ToolError` | Bash execution failures (timeout, output overflow) |
+| `ToolError` | Bash execution failures that cannot be returned as tool text |
 
 Provider and workspace failures propagate to the caller; ordinary shell failures
 and bounded execution failures are returned to the model as tool-result text.
@@ -149,4 +153,16 @@ The bash tool handles process management differently per platform:
 
 The kernel accepts a `ProviderConfig` and `ExecutionPolicy` from a frontend and
 validates them during `KernelSession` initialization, including LiteLLM provider
-preflight. It has no dependency on frontend configuration paths.
+preflight via `validate_provider_config`. It has no dependency on frontend
+configuration paths.
+
+## Breaking changes (this refactor)
+
+- Split internals into `provider.py`, `streaming.py`, and `workspace/` package.
+- Deleted packaged `data/` seeds; missing prompt/memory files are created empty.
+- Default command timeout is **1800** seconds.
+- Removed `reset_system_prompt`, `reset_memory`, and `reset_workspace`.
+- History is role-only; `kind` events are gone.
+- Provider/cancel failures append user-role history messages then raise.
+- `provider_params` is `Mapping[str, Any] | None` and is not scalar-validated.
+- Message types use LiteLLM `AllMessageValues` (no `Message` alias).

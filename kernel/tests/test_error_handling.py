@@ -12,8 +12,9 @@ from amnesia_agent_kernel import (
     ProviderError,
     ToolError,
     WorkspaceError,
+    validate_provider_config,
 )
-from amnesia_agent_kernel.agent import agent_turn, validate_provider_environment
+from amnesia_agent_kernel.agent import agent_turn
 from amnesia_agent_kernel.events import Delta
 from amnesia_agent_kernel.tools import run_tool_call
 from amnesia_agent_kernel.workspace import Workspace
@@ -31,23 +32,23 @@ class ProviderValidationTests(unittest.TestCase):
     def test_malformed_preflight_result_is_provider_error(self) -> None:
         config = ProviderConfig("openai/test")
         with patch(
-            "amnesia_agent_kernel.agent.litellm.validate_environment",
+            "amnesia_agent_kernel.provider.litellm.validate_environment",
             return_value=None,
         ), self.assertRaises(ProviderError):
-            validate_provider_environment(config)
+            validate_provider_config(config)
 
     def test_noncredential_provider_params_do_not_bypass_missing_key(self) -> None:
         config = ProviderConfig("openai/test", provider_params={"temperature": 0.5})
         with patch(
-            "amnesia_agent_kernel.agent.litellm.validate_environment",
+            "amnesia_agent_kernel.provider.litellm.validate_environment",
             return_value={"keys_in_environment": False, "missing_keys": ["OPENAI_API_KEY"]},
         ), self.assertRaises(ProviderError):
-            validate_provider_environment(config)
+            validate_provider_config(config)
 
     def test_session_preflights_before_workspace_setup(self) -> None:
         config = ProviderConfig("openai/test")
         with patch(
-            "amnesia_agent_kernel.agent.litellm.validate_environment",
+            "amnesia_agent_kernel.provider.litellm.validate_environment",
             side_effect=RuntimeError("missing credentials"),
         ), self.assertRaises(ProviderError):
             KernelSession(config, workspace_root=tempfile.mkdtemp())
@@ -77,7 +78,7 @@ class ToolErrorTests(unittest.IsolatedAsyncioTestCase):
 
 
 class AgentTurnErrorTests(unittest.IsolatedAsyncioTestCase):
-    async def test_stream_failure_persists_partial_message_and_sidecar(self) -> None:
+    async def test_stream_failure_persists_partial_message_and_user_error(self) -> None:
         async def broken_stream() -> object:
             yield SimpleNamespace(
                 choices=[SimpleNamespace(delta=SimpleNamespace(content="partial", tool_calls=[]))]
@@ -103,9 +104,10 @@ class AgentTurnErrorTests(unittest.IsolatedAsyncioTestCase):
             records = workspace.read_history()
         self.assertEqual(records[0]["role"], "user")
         self.assertEqual(records[1], {"role": "assistant", "content": "partial"})
-        self.assertEqual(records[2]["kind"], "turn_error")
+        self.assertEqual(records[2]["role"], "user")
+        self.assertIn("error: ProviderError:", records[2]["content"])
 
-    async def test_cancellation_persists_partial_output_and_event(self) -> None:
+    async def test_cancellation_persists_partial_output_and_user_message(self) -> None:
         delta_seen = asyncio.Event()
 
         async def cancellable_stream() -> object:
@@ -136,7 +138,7 @@ class AgentTurnErrorTests(unittest.IsolatedAsyncioTestCase):
             records = workspace.read_history()
 
         self.assertEqual(records[1], {"role": "assistant", "content": "partial"})
-        self.assertEqual(records[2]["kind"], "turn_cancelled")
+        self.assertEqual(records[2], {"role": "user", "content": "user interrupted"})
 
     async def test_falsey_history_input_is_rejected_without_deletion(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -145,6 +147,14 @@ class AgentTurnErrorTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(WorkspaceError):
                 workspace.update_history(None)  # type: ignore[arg-type]
             self.assertEqual(workspace.read_history()[0]["content"], "keep")
+
+    async def test_kind_history_records_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Workspace(directory)
+            with self.assertRaises(WorkspaceError):
+                workspace.update_history(
+                    [{"kind": "turn_error", "message": "nope"}]  # type: ignore[list-item]
+                )
 
 
 if __name__ == "__main__":

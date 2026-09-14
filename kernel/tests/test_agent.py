@@ -6,9 +6,11 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
-from amnesia_agent_kernel.agent import _assistant_message, _request_kwargs, agent_turn
+from amnesia_agent_kernel.agent import agent_turn
 from amnesia_agent_kernel.errors import ConfigError, ProviderError
 from amnesia_agent_kernel.events import AssistantMessage, Delta, ToolResult
+from amnesia_agent_kernel.provider import _request_kwargs
+from amnesia_agent_kernel.streaming import _assistant_message
 from amnesia_agent_kernel.types import ExecutionPolicy, ProviderConfig
 from amnesia_agent_kernel.workspace import Workspace
 
@@ -111,13 +113,10 @@ class AgentTurnTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(calls), 2)
         first_messages = calls[0]["messages"]
-        self.assertEqual(first_messages[0]["role"], "system")
-        self.assertIn("# System Prompt", first_messages[0]["content"])
-        self.assertIn("# Memory", first_messages[0]["content"])
-        self.assertEqual(first_messages[1], {"role": "user", "content": "hi"})
+        self.assertEqual(first_messages[0], {"role": "user", "content": "hi"})
         second_messages = calls[1]["messages"]
-        self.assertEqual(len(second_messages), 4)
-        self.assertEqual(second_messages[3], tool_message)
+        self.assertEqual(len(second_messages), 3)
+        self.assertEqual(second_messages[2], tool_message)
         self.assertEqual(history_roles, ["user", "assistant", "tool", "assistant"])
 
     async def test_structured_response_format_is_forwarded_on_each_model_request(self) -> None:

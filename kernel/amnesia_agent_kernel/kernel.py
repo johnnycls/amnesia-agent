@@ -5,14 +5,12 @@ import os
 from collections.abc import AsyncIterator, Mapping, Sequence
 from typing import Any
 
-from amnesia_agent_kernel.agent import (
-    agent_turn,
-    validate_execution_policy,
-    validate_provider_config,
-    validate_provider_environment,
-)
+from litellm.types.llms.openai import AllMessageValues
+
+from amnesia_agent_kernel.agent import agent_turn
 from amnesia_agent_kernel.events import Event
-from amnesia_agent_kernel.types import ExecutionPolicy, Message, ProviderConfig
+from amnesia_agent_kernel.provider import validate_execution_policy, validate_provider_config
+from amnesia_agent_kernel.types import ExecutionPolicy, ProviderConfig
 from amnesia_agent_kernel.workspace import Workspace
 
 
@@ -26,7 +24,6 @@ class KernelSession:
         workspace_root: str | os.PathLike[str] | None = None,
     ) -> None:
         validate_provider_config(provider)
-        validate_provider_environment(provider)
         selected_policy = policy or ExecutionPolicy()
         validate_execution_policy(selected_policy)
         self.provider = provider.snapshot()
@@ -56,29 +53,22 @@ class KernelSession:
     def update_system_prompt(self, content: str) -> None:
         self._workspace.update_system_prompt(content)
 
-    def reset_system_prompt(self) -> None:
-        self._workspace.reset_system_prompt()
-
     def read_memory(self) -> str:
         return self._workspace.read_memory()
 
     def update_memory(self, content: str) -> None:
         self._workspace.update_memory(content)
 
-    def reset_memory(self) -> None:
-        self._workspace.reset_memory()
-
-    def read_history(self, date: str | None = None) -> list[Message]:
+    def read_history(self, date: str | None = None) -> list[AllMessageValues]:
         return self._workspace.read_history(date)
 
     def list_history(self) -> list[str]:
         return self._workspace.list_history()
 
-    def update_history(self, messages: Sequence[Message], date: str | None = None) -> None:
+    def update_history(
+        self, messages: Sequence[AllMessageValues], date: str | None = None
+    ) -> None:
         self._workspace.update_history(messages, date)
 
     def reset_history(self) -> None:
         self._workspace.reset_history()
-
-    def reset_workspace(self) -> None:
-        self._workspace.reset()

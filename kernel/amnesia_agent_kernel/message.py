@@ -2,8 +2,9 @@
 
 from typing import Any
 
+from litellm.types.llms.openai import AllMessageValues
+
 from amnesia_agent_kernel.errors import ConfigError, ProviderError
-from amnesia_agent_kernel.types import Message
 from amnesia_agent_kernel.workspace import Workspace
 
 
@@ -26,10 +27,10 @@ def truncate_middle(text: str, max_chars: int) -> str:
 def build_messages(
     system_prompt: str,
     user_input: str,
-    turn_messages: list[Message],
+    turn_messages: list[AllMessageValues],
     max_context_message_chars: int,
     workspace: Workspace,
-) -> list[Message]:
+) -> list[AllMessageValues]:
     """Assemble system, user, and same-turn messages."""
     if not isinstance(system_prompt, str) or not isinstance(user_input, str):
         raise ProviderError("Prompt and user input must be text")
@@ -46,10 +47,11 @@ def build_messages(
     memory = workspace.read_memory()
     if not isinstance(memory, str):
         raise ProviderError("Memory content must be text")
-    messages: list[Message] = [
-        {"role": "system", "content": f"{system_prompt}\n\n{memory}"},
-        {"role": "user", "content": user_input},
-    ]
+    messages: list[AllMessageValues] = []
+    system_parts = [part for part in (system_prompt, memory) if part]
+    if system_parts:
+        messages.append({"role": "system", "content": "\n\n".join(system_parts)})
+    messages.append({"role": "user", "content": user_input})
     for message in turn_messages:
         content: Any = message.get("content")
         if (
@@ -57,9 +59,11 @@ def build_messages(
             and isinstance(content, str)
             and len(content) > max_context_message_chars
         ):
-            message = {
+            truncated: AllMessageValues = {
                 **message,
                 "content": truncate_middle(content, max_context_message_chars),
             }
-        messages.append(message)
+            messages.append(truncated)
+        else:
+            messages.append(message)
     return messages
