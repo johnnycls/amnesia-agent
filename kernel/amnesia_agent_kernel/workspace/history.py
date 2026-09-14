@@ -2,6 +2,7 @@
 
 import json
 import os
+import shutil
 import stat
 import tempfile
 import threading
@@ -196,35 +197,22 @@ class HistoryStore:
 
     def reset_history(self) -> None:
         directory = self.root / HISTORY_DIRECTORY
-        failures: list[WorkspaceError] = []
         with self._history_lock:
-            dates = self._list_history_unlocked()
-            for date in dates:
-                path = history_path(self.root, date)
-                try:
-                    path.unlink()
-                except OSError as e:
-                    failures.append(
-                        WorkspaceError(f"Cannot reset history {path}: {e}", path=str(path))
-                    )
             try:
                 try:
                     directory_mode = directory.stat().st_mode
                 except FileNotFoundError:
-                    directory_mode = None
-                if directory_mode is not None and stat.S_ISDIR(directory_mode) and not any(
-                    directory.iterdir()
-                ):
-                    directory.rmdir()
-            except OSError as e:
-                failures.append(
-                    WorkspaceError(
-                        f"Cannot reset history directory {directory}: {e}",
+                    return
+                if not stat.S_ISDIR(directory_mode):
+                    raise WorkspaceError(
+                        f"History path is not a directory: {directory}",
                         path=str(directory),
                     )
-                )
-        if failures:
-            details = "; ".join(str(error) for error in failures)
-            raise WorkspaceError(
-                f"History reset incomplete: {details}", path=str(directory)
-            ) from failures[0]
+                shutil.rmtree(directory)
+            except WorkspaceError:
+                raise
+            except OSError as e:
+                raise WorkspaceError(
+                    f"Cannot reset history directory {directory}: {e}",
+                    path=str(directory),
+                ) from e

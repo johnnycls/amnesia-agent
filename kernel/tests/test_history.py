@@ -69,12 +69,15 @@ class HistoryTests(unittest.TestCase):
             legacy.write_text('{"role":"user","content":"legacy"}\n', encoding="utf-8")
             workspace.update_history([{"role": "user", "content": "new"}])
             workspace.update_history([{"role": "user", "content": "old"}], date="2026-08-27")
+            history_dir = Path(directory, "history")
+            (history_dir / "junk.txt").write_text("noise", encoding="utf-8")
 
             workspace.reset_history()
 
             self.assertEqual(workspace.list_history(), [])
             self.assertEqual(json.loads(legacy.read_text(encoding="utf-8"))["content"], "legacy")
             self.assertEqual(workspace.read_history(), [])
+            self.assertFalse(history_dir.exists())
 
     def test_invalid_dates_raise_agent_error(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
