@@ -13,7 +13,7 @@ from amnesia_agent_local_server.config import (
     ConfigStore,
     LoadedConfig,
     public_config,
-    resolved_workspace_root,
+    resolve_request_workspace_path,
 )
 from amnesia_agent_local_server.sse import event_envelope
 
@@ -27,6 +27,7 @@ class SessionManager:
 
     Strategy A: do **not** cache ``KernelSession`` across turns. Every turn and
     every workspace read/update builds a new session from the latest config.
+    Workspace root comes from the per-request ``workspace_path`` (not config).
     """
 
     def __init__(
@@ -59,16 +60,18 @@ class SessionManager:
     def _loaded(self) -> LoadedConfig:
         return self.config_store.load()
 
-    def _workspace_root(self, loaded: LoadedConfig | None = None) -> str | None:
-        return resolved_workspace_root(loaded if loaded is not None else self._loaded())
-
-    def build_session(self, loaded: LoadedConfig | None = None) -> KernelSession:
-        """Construct a fresh ``KernelSession`` from the latest (or given) config."""
+    def build_session(
+        self,
+        loaded: LoadedConfig | None = None,
+        *,
+        workspace_path: str | None = None,
+    ) -> KernelSession:
+        """Construct a fresh ``KernelSession`` from config + request workspace path."""
         config = loaded if loaded is not None else self._loaded()
         return KernelSession(
             config.provider,
             config.policy,
-            workspace_root=resolved_workspace_root(config),
+            workspace_root=resolve_request_workspace_path(workspace_path),
         )
 
     def read_config(self) -> dict[str, Any]:
@@ -86,79 +89,92 @@ class SessionManager:
         self.require_idle("reset configuration")
         return public_config(self.config_store.reset())
 
-    def check_workspace(self) -> bool:
-        return KernelSession.check_workspace(self._workspace_root())
+    def check_workspace(self, workspace_path: str | None = None) -> bool:
+        return KernelSession.check_workspace(resolve_request_workspace_path(workspace_path))
 
-    def setup_or_repair_workspace(self) -> None:
+    def setup_or_repair_workspace(self, workspace_path: str | None = None) -> None:
         self.require_idle("setup or repair workspace")
-        KernelSession.setup_or_repair_workspace(self._workspace_root())
+        KernelSession.setup_or_repair_workspace(resolve_request_workspace_path(workspace_path))
 
-    def create_or_reset_workspace(self) -> None:
+    def create_or_reset_workspace(self, workspace_path: str | None = None) -> None:
         self.require_idle("create or reset workspace")
-        KernelSession.create_or_reset_workspace(self._workspace_root())
+        KernelSession.create_or_reset_workspace(resolve_request_workspace_path(workspace_path))
 
-    def read_system_prompt(self) -> str:
-        return self.build_session().read_system_prompt()
+    def read_system_prompt(self, workspace_path: str | None = None) -> str:
+        return self.build_session(workspace_path=workspace_path).read_system_prompt()
 
-    def update_system_prompt(self, content: str) -> str:
+    def update_system_prompt(
+        self, content: str, workspace_path: str | None = None
+    ) -> str:
         self.require_idle("update system prompt")
-        self.build_session().update_system_prompt(content)
+        self.build_session(workspace_path=workspace_path).update_system_prompt(content)
         return content
 
-    def read_memory(self) -> str:
-        return self.build_session().read_memory()
+    def read_memory(self, workspace_path: str | None = None) -> str:
+        return self.build_session(workspace_path=workspace_path).read_memory()
 
-    def update_memory(self, content: str) -> str:
+    def update_memory(self, content: str, workspace_path: str | None = None) -> str:
         self.require_idle("update memory")
-        self.build_session().update_memory(content)
+        self.build_session(workspace_path=workspace_path).update_memory(content)
         return content
 
-    def list_history(self) -> list[str]:
-        return self.build_session().list_history()
+    def list_history(self, workspace_path: str | None = None) -> list[str]:
+        return self.build_session(workspace_path=workspace_path).list_history()
 
-    def read_history(self, date: str | None = None) -> list[AllMessageValues]:
-        return list(self.build_session().read_history(date))
+    def read_history(
+        self,
+        date: str | None = None,
+        workspace_path: str | None = None,
+    ) -> list[AllMessageValues]:
+        return list(self.build_session(workspace_path=workspace_path).read_history(date))
 
     def update_history(
         self,
         messages: Sequence[AllMessageValues],
         date: str | None = None,
+        workspace_path: str | None = None,
     ) -> None:
         self.require_idle("update history")
-        self.build_session().update_history(messages, date)
+        self.build_session(workspace_path=workspace_path).update_history(messages, date)
 
-    def reset_history(self) -> None:
+    def reset_history(self, workspace_path: str | None = None) -> None:
         self.require_idle("reset history")
-        self.build_session().reset_history()
+        self.build_session(workspace_path=workspace_path).reset_history()
 
     def start_turn(
         self,
         user_input: str,
         response_format: Mapping[str, Any] | None = None,
+        workspace_path: str | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Acquire the busy flag and return the SSE envelope stream.
 
         ``response_format`` is optional structured-output JSON passed through to
         ``KernelSession.turn`` (``None`` / omitted → no structured output).
 
+        ``workspace_path`` is optional; omit/empty → kernel default workspace.
+
         Raises ``TurnBusyError`` synchronously so callers can map it to HTTP 409
         before starting a streaming response. The caller must ``aclose`` the
         returned generator (e.g. via ``contextlib.aclosing``) so the busy flag
         is released on disconnect or cancel.
+
+        Concurrency remains a **global** single-turn busy flag (not path-keyed).
         """
         if self._active:
             raise TurnBusyError("Another turn is already active")
         self._active = True
-        return self._stream_turn(user_input, response_format)
+        return self._stream_turn(user_input, response_format, workspace_path)
 
     async def _stream_turn(
         self,
         user_input: str,
         response_format: Mapping[str, Any] | None = None,
+        workspace_path: str | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Yield SSE envelopes for one turn; release busy in ``finally``."""
         try:
-            session = self.build_session()
+            session = self.build_session(workspace_path=workspace_path)
             turn_events = session.turn(user_input, response_format=response_format)
             self._turn_events = turn_events
             try:
@@ -208,12 +224,6 @@ def _merge_config(current: LoadedConfig, fields: Mapping[str, Any]) -> LoadedCon
     else:
         provider_params = current.provider.provider_params
 
-    if "workspace_path" in fields:
-        raw_path = fields["workspace_path"]
-        workspace_path = "" if raw_path is None else str(raw_path)
-    else:
-        workspace_path = current.workspace_path
-
     def pick(name: str, current_value: Any) -> Any:
         if name in fields and fields[name] is not None:
             return fields[name]
@@ -237,5 +247,4 @@ def _merge_config(current: LoadedConfig, fields: Mapping[str, Any]) -> LoadedCon
                 "max_context_message_chars", current.policy.max_context_message_chars
             ),
         ),
-        workspace_path=workspace_path,
     )

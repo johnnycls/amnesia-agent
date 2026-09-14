@@ -26,8 +26,6 @@ DEFAULT_PROVIDER_PARAMS: Final[dict[str, Any]] = {}
 DEFAULT_COMMAND_TIMEOUT_SECONDS: Final[float] = 1800.0
 DEFAULT_MAX_COMMAND_OUTPUT_BYTES: Final[int] = 256 * 1024
 DEFAULT_MAX_CONTEXT_MESSAGE_CHARS: Final[int] = 1000
-# Empty string → kernel default workspace (~/.amnesia-agent).
-DEFAULT_WORKSPACE_PATH: Final[str] = ""
 
 CONFIG_FIELDS: Final[tuple[str, ...]] = (
     "model",
@@ -37,7 +35,6 @@ CONFIG_FIELDS: Final[tuple[str, ...]] = (
     "command_timeout_seconds",
     "max_command_output_bytes",
     "max_context_message_chars",
-    "workspace_path",
 )
 _CONFIG_KEYS = frozenset(CONFIG_FIELDS)
 
@@ -52,7 +49,6 @@ def default_config_dict() -> dict[str, Any]:
         "command_timeout_seconds": DEFAULT_COMMAND_TIMEOUT_SECONDS,
         "max_command_output_bytes": DEFAULT_MAX_COMMAND_OUTPUT_BYTES,
         "max_context_message_chars": DEFAULT_MAX_CONTEXT_MESSAGE_CHARS,
-        "workspace_path": DEFAULT_WORKSPACE_PATH,
     }
 
 
@@ -75,20 +71,18 @@ def _resolve_root(root: str | os.PathLike[str] | None) -> Path:
 
 @dataclass(frozen=True)
 class LoadedConfig:
-    """Validated provider settings, execution policy, and workspace path."""
+    """Validated provider settings and execution policy."""
 
     provider: ProviderConfig
     policy: ExecutionPolicy
-    workspace_path: str = DEFAULT_WORKSPACE_PATH
 
 
-def resolved_workspace_root(config: LoadedConfig) -> str | None:
-    """Map configured ``workspace_path`` to a KernelSession ``workspace_root``.
+def resolve_request_workspace_path(value: str | None) -> str | None:
+    """Map a request ``workspace_path`` to a KernelSession ``workspace_root``.
 
-    Empty/missing → ``None`` (kernel default ``~/.amnesia-agent``). Non-blank
-    strings are passed through; expanduser happens in the kernel.
+    Omit/``None``/empty string → ``None`` (kernel default ``~/.amnesia-agent``).
+    Non-blank strings are passed through; expanduser happens in the kernel.
     """
-    value = config.workspace_path
     if value is None or value == "":
         return None
     return value
@@ -104,7 +98,6 @@ def config_to_raw(config: LoadedConfig) -> dict[str, Any]:
         "command_timeout_seconds": config.policy.command_timeout_seconds,
         "max_command_output_bytes": config.policy.max_command_output_bytes,
         "max_context_message_chars": config.policy.max_context_message_chars,
-        "workspace_path": config.workspace_path or "",
     }
 
 
@@ -172,7 +165,6 @@ class ConfigStore:
         """Validate and atomically persist a configuration snapshot."""
         _validate_provider(config.provider)
         validate_execution_policy(config.policy)
-        _validate_workspace_path(config.workspace_path)
         self._atomic_write(config_to_raw(config))
 
     def _parse(self, raw_value: Any) -> LoadedConfig:
@@ -202,19 +194,14 @@ class ConfigStore:
                 "max_context_message_chars", DEFAULT_MAX_CONTEXT_MESSAGE_CHARS
             ),
         )
-        workspace_path = raw.get("workspace_path", DEFAULT_WORKSPACE_PATH)
-        if workspace_path is None:
-            workspace_path = DEFAULT_WORKSPACE_PATH
         try:
             _validate_provider(provider)
             validate_execution_policy(policy)
-            _validate_workspace_path(workspace_path)
         except ConfigError as error:
             raise ConfigError(str(error), path=str(self.path)) from error
         return LoadedConfig(
             provider=provider,
             policy=policy,
-            workspace_path=cast(str, workspace_path),
         )
 
 
@@ -230,12 +217,6 @@ def _validate_provider(provider: ProviderConfig) -> None:
     validate_provider_config(provider)
 
 
-def _validate_workspace_path(value: Any) -> None:
-    """Ensure ``workspace_path`` is a string (empty allowed for kernel default)."""
-    if not isinstance(value, str):
-        raise ConfigError(f"workspace_path must be a string, got {type(value).__name__}")
-
-
 def public_config(config: LoadedConfig) -> dict[str, Any]:
     """Return config safe for clients; never disclose the API key."""
     raw = config_to_raw(config)
@@ -248,5 +229,4 @@ def public_config(config: LoadedConfig) -> dict[str, Any]:
         "command_timeout_seconds": raw["command_timeout_seconds"],
         "max_command_output_bytes": raw["max_command_output_bytes"],
         "max_context_message_chars": raw["max_context_message_chars"],
-        "workspace_path": raw["workspace_path"],
     }

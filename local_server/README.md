@@ -46,20 +46,21 @@ amnesia_agent_local_server/
 ## Configuration
 
 Defaults live as importable Python constants in `amnesia_agent_local_server.config`
-(`DEFAULT_MODEL`, `DEFAULT_COMMAND_TIMEOUT_SECONDS`, `DEFAULT_WORKSPACE_PATH`, …
-/ `default_config_dict()`). They are persisted at
-`~/.amnesia-agent-local-server/config.json` (separate from the kernel workspace).
+(`DEFAULT_MODEL`, `DEFAULT_COMMAND_TIMEOUT_SECONDS`, … / `default_config_dict()`).
+They are persisted at `~/.amnesia-agent-local-server/config.json` (separate from
+the kernel workspace).
 
-Provider/policy fields align with the CLI. **local_server-only:** `workspace_path`
-(string; empty/missing → kernel default `~/.amnesia-agent`).
+Provider/policy fields align with the CLI. **Workspace root is not a config
+field** — pass optional `workspace_path` on each request (see Workspace / Turn).
 
 - Missing file: lazy-created from those constants.
 - Corrupt/invalid config: fail loud with an HTTP error — **not** auto-repaired.
 - Restore defaults only via `POST /v1/config/reset` (rewrites from constants).
+- Legacy `workspace_path` keys in `config.json` are **rejected** as unexpected
+  properties (remove the key and pass the path per request instead).
 
 Public responses mask the API key: `api_key` is always `null` and
-`api_key_set: boolean` indicates whether a key is stored. `workspace_path` is
-returned as configured (empty string means kernel default).
+`api_key_set: boolean` indicates whether a key is stored.
 
 ## HTTP API (`/v1`)
 
@@ -87,18 +88,20 @@ POST /v1/config/reset     → rewrite defaults from constants
 
 Config changes return **409** while a turn is active. There is no long-lived
 `KernelSession` cache: every turn and workspace read/update builds a fresh
-session from the latest config (including `workspace_path`).
+session from the latest config plus the request’s optional `workspace_path`.
 
 ### Turn (SSE)
 
 ```text
-POST /v1/turn   {"text":"...","response_format":{...}|null}
+POST /v1/turn   {"text":"...","response_format":{...}|null,"workspace_path":"..."|null}
 ```
 
 Body: required `text` (non-empty string); optional `response_format` (JSON object
-or `null` / omitted). Wrong types fail loud with **422**. When omitted or
-`null`, the server passes `None` to `KernelSession.turn` (no structured output).
-When provided, the object is forwarded unchanged to the kernel.
+or `null` / omitted); optional `workspace_path` (string or `null` / omitted /
+empty → kernel default `~/.amnesia-agent`). Wrong types fail loud with **422**.
+When `response_format` is omitted or `null`, the server passes `None` to
+`KernelSession.turn` (no structured output). When provided, the object is
+forwarded unchanged to the kernel.
 
 Server-Sent Events stream. Kernel `turn` yields `str` deltas and role messages
 (`AllMessageValues`); the server maps them as:
@@ -157,26 +160,32 @@ data: {"type":"error","data":{"error_type":"...","message":"..."}}
 
 ### Workspace
 
-Mirrors `KernelSession` staticmethods and read/update APIs. Paths operate on the
-**configured** `workspace_path` (resolved: empty → kernel default
-`~/.amnesia-agent`; otherwise the configured string, with expanduser in the
-kernel). Invalid roots fail loud as `WorkspaceError` → HTTP **400**.
+Mirrors `KernelSession` staticmethods and read/update APIs. The workspace root
+comes from an optional per-request `workspace_path` (omit / `null` / empty →
+kernel default `~/.amnesia-agent`; otherwise the string is passed through, with
+expanduser in the kernel). Invalid roots fail loud as `WorkspaceError` → HTTP
+**400**.
+
+- **GET** routes: optional query param `?workspace_path=...`
+- **Write** routes (PUT/POST that mutate): optional `workspace_path` in the JSON
+  body (alongside existing fields). Lifecycle POSTs may send
+  `{"workspace_path":"..."}` or an empty/omitted body.
 
 ```text
-GET  /v1/workspace/check                → {"ok": true|false}
-POST /v1/workspace/setup-or-repair      → create missing dir / empty prompt+memory
-POST /v1/workspace/create-or-reset      → wipe workspace root, recreate empty files
+GET  /v1/workspace/check?workspace_path=...                → {"ok": true|false}
+POST /v1/workspace/setup-or-repair   {"workspace_path"?}   → create missing dir / empty prompt+memory
+POST /v1/workspace/create-or-reset   {"workspace_path"?}   → wipe workspace root, recreate empty files
 
-GET  /v1/workspace/system-prompt        → {"content":"..."}
-PUT  /v1/workspace/system-prompt        → {"content":"..."}
+GET  /v1/workspace/system-prompt?workspace_path=...        → {"content":"..."}
+PUT  /v1/workspace/system-prompt     {"content","workspace_path"?}
 
-GET  /v1/workspace/memory               → {"content":"..."}
-PUT  /v1/workspace/memory               → {"content":"..."}
+GET  /v1/workspace/memory?workspace_path=...               → {"content":"..."}
+PUT  /v1/workspace/memory            {"content","workspace_path"?}
 
-GET  /v1/workspace/history              → {"dates":[...]}   # newest first
-GET  /v1/workspace/history/{YYYY-MM-DD} → {"date":"...","messages":[...]}
-PUT  /v1/workspace/history              → {"messages":[...],"date":...|null}
-POST /v1/workspace/history/reset        → {"reset": true}
+GET  /v1/workspace/history?workspace_path=...              → {"dates":[...]}   # newest first
+GET  /v1/workspace/history/{YYYY-MM-DD}?workspace_path=... → {"date":"...","messages":[...]}
+PUT  /v1/workspace/history           {"messages","date"?,"workspace_path"?}
+POST /v1/workspace/history/reset     {"workspace_path"?}   → {"reset": true}
 ```
 
 `PUT /v1/workspace/history` mirrors `KernelSession.update_history(messages, date)`:
@@ -184,10 +193,11 @@ optional `date` defaults to today when omitted/null.
 
 Suggested open flow: **check → if not ok, setup-or-repair or create-or-reset →
 then read/update / turn**. While a turn is active, **all workspace writes**
-return **409** via `require_idle`: `update_system_prompt`, `update_memory`,
-`update_history`, history reset, setup/repair, create/reset, and config changes.
-Reads stay allowed. Changing `workspace_path` does not need a special session
-invalidate (sessions are not cached across turns).
+return **409** via the **global** idle flag (`require_idle`): 
+`update_system_prompt`, `update_memory`, `update_history`, history reset,
+setup/repair, create/reset, and config changes. Reads stay allowed. Turn
+concurrency is still a single global busy flag (not path-keyed). Sessions are
+not cached across turns.
 
 ### Shutdown
 
@@ -239,9 +249,13 @@ Relative to the pre-rewrite `service.py` / monolithic `app.py` layout:
    create/reset.
 5. **Config defaults** — no packaged `data/config.json`; defaults are Python
    constants. `/shutdown` is honest when uvicorn is not wired (503).
-6. **`workspace_path`** — local_server config field (empty = kernel default).
-   Workspace HTTP and turns use the configured path. Sessions are not cached
-   across turns (fresh `KernelSession` each time from latest config).
+6. **`workspace_path` removed from config** — no longer in `LoadedConfig` /
+   `CONFIG_FIELDS` / defaults / public config. Pass optional `workspace_path`
+   per request (GET query param; write/turn JSON body). Omit/empty → kernel
+   default `~/.amnesia-agent`. Remove any legacy `workspace_path` key from
+   `~/.amnesia-agent-local-server/config.json` or load fails loud. Frontends
+   that only used the default path keep working without changes; clients that
+   previously set the path via config must send it on each request.
 7. **`POST /v1/turn` `response_format`** — optional client-supplied structured
    output. The server no longer always requests `answer_with_choices`. Clients
    that relied on server-side structured output must send `response_format`

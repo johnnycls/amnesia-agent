@@ -196,11 +196,11 @@ class SessionTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as directory:
                 store = ConfigStore(directory)
                 custom = str(Path(directory) / "ws")
-                _write_config(store, {"workspace_path": custom})
+                _write_config(store)
                 manager = SessionManager(store)
                 with patch("amnesia_agent_local_server.session.KernelSession", FakeSession):
                     for text in ("one", "two"):
-                        events_agen = manager.start_turn(text)
+                        events_agen = manager.start_turn(text, workspace_path=custom)
                         async with aclosing(events_agen):
                             async for _event in events_agen:
                                 pass
@@ -230,8 +230,6 @@ class SessionTests(unittest.TestCase):
             manager._active = True
             with self.assertRaises(TurnBusyError):
                 manager.update_config({"model": "openai/new"})
-            with self.assertRaises(TurnBusyError):
-                manager.update_config({"workspace_path": "/tmp/other"})
             with self.assertRaises(TurnBusyError):
                 manager.setup_or_repair_workspace()
             with self.assertRaises(TurnBusyError):
@@ -395,6 +393,42 @@ class SessionTests(unittest.TestCase):
                     )
                     self.assertEqual(response.status_code, 422)
                     self.assertIn("detail", response.json())
+
+    def test_turn_http_passes_workspace_path(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = ConfigStore(directory)
+            _write_config(store)
+            custom = str(Path(directory) / "ws")
+            client = TestClient(create_app(store))
+            with patch("amnesia_agent_local_server.session.KernelSession", FakeSession):
+                response = client.post(
+                    "/v1/turn",
+                    json={"text": "hi", "workspace_path": custom},
+                )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(FakeSession.created[0].workspace_root, custom)
+
+    def test_turn_http_omitted_workspace_path_is_none(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = ConfigStore(directory)
+            _write_config(store)
+            client = TestClient(create_app(store))
+            with patch("amnesia_agent_local_server.session.KernelSession", FakeSession):
+                response = client.post("/v1/turn", json={"text": "hi"})
+            self.assertEqual(response.status_code, 200)
+            self.assertIsNone(FakeSession.created[0].workspace_root)
+
+    def test_turn_http_empty_workspace_path_is_none(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = ConfigStore(directory)
+            _write_config(store)
+            client = TestClient(create_app(store))
+            with patch("amnesia_agent_local_server.session.KernelSession", FakeSession):
+                response = client.post(
+                    "/v1/turn", json={"text": "hi", "workspace_path": ""}
+                )
+            self.assertEqual(response.status_code, 200)
+            self.assertIsNone(FakeSession.created[0].workspace_root)
 
 
 
