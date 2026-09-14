@@ -1,6 +1,7 @@
 import json
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -41,6 +42,7 @@ class ConfigTests(unittest.TestCase):
                 json.dumps(
                     {
                         "model": "openai/test",
+                        "api_key": "secret",
                         "provider_params": {"temperature": 0.2},
                     }
                 ),
@@ -49,6 +51,41 @@ class ConfigTests(unittest.TestCase):
             loaded = store.load()
             store.save(loaded)
             self.assertEqual(store.load().provider.provider_params["temperature"], 0.2)
+
+
+class WorkspaceApiTests(unittest.TestCase):
+    def test_workspace_lifecycle_endpoints(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = ConfigStore(directory)
+            client = TestClient(create_app(store))
+            with patch(
+                "amnesia_agent_local_server.service.KernelSession.check_workspace",
+                return_value=False,
+            ):
+                response = client.get("/v1/workspace/check")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json(), {"ok": False})
+
+            with patch(
+                "amnesia_agent_local_server.service.KernelSession.setup_or_repair_workspace"
+            ) as setup:
+                response = client.post("/v1/workspace/setup-or-repair")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json(), {"ok": True})
+            setup.assert_called_once_with()
+
+            with patch(
+                "amnesia_agent_local_server.service.KernelSession.create_or_reset_workspace"
+            ) as reset:
+                response = client.post("/v1/workspace/create-or-reset")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json(), {"ok": True})
+            reset.assert_called_once_with()
+
+            gone = client.post("/v1/workspace/system-prompt/reset")
+            self.assertEqual(gone.status_code, 404)
+            gone = client.post("/v1/workspace/memory/reset")
+            self.assertEqual(gone.status_code, 404)
 
 
 if __name__ == "__main__":

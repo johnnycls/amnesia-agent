@@ -63,6 +63,20 @@ def create_app(
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
+    @app.get(f"{API_PREFIX}/workspace/check")
+    async def check_workspace() -> dict[str, bool]:
+        return {"ok": _call(lambda: app.state.agent_service.check_workspace())}
+
+    @app.post(f"{API_PREFIX}/workspace/setup-or-repair")
+    async def setup_or_repair_workspace() -> dict[str, bool]:
+        _call(lambda: app.state.agent_service.setup_or_repair_workspace())
+        return {"ok": True}
+
+    @app.post(f"{API_PREFIX}/workspace/create-or-reset")
+    async def create_or_reset_workspace() -> dict[str, bool]:
+        _call(lambda: app.state.agent_service.create_or_reset_workspace())
+        return {"ok": True}
+
     @app.get(f"{API_PREFIX}/workspace/system-prompt")
     async def read_system_prompt() -> dict[str, str]:
         return _content_response(lambda: app.state.agent_service.read_system_prompt())
@@ -73,10 +87,6 @@ def create_app(
             lambda: app.state.agent_service.update_system_prompt(content.content)
         )
 
-    @app.post(f"{API_PREFIX}/workspace/system-prompt/reset")
-    async def reset_system_prompt() -> dict[str, str]:
-        return _content_response(lambda: app.state.agent_service.reset_system_prompt())
-
     @app.get(f"{API_PREFIX}/workspace/memory")
     async def read_memory() -> dict[str, str]:
         return _content_response(lambda: app.state.agent_service.read_memory())
@@ -84,10 +94,6 @@ def create_app(
     @app.put(f"{API_PREFIX}/workspace/memory")
     async def update_memory(content: ContentRequest) -> dict[str, str]:
         return _content_response(lambda: app.state.agent_service.update_memory(content.content))
-
-    @app.post(f"{API_PREFIX}/workspace/memory/reset")
-    async def reset_memory() -> dict[str, str]:
-        return _content_response(lambda: app.state.agent_service.reset_memory())
 
     @app.get(f"{API_PREFIX}/workspace/history")
     async def list_history() -> dict[str, list[str]]:
