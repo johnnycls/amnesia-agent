@@ -1,6 +1,6 @@
 """Streaming helpers for assembling assistant messages from provider deltas."""
 
-from typing import Any
+from typing import Any, cast
 
 from litellm.types.llms.openai import AllMessageValues
 
@@ -45,4 +45,4 @@ def _assistant_message(parts: list[str], calls: dict[int, dict[str, Any]]) -> Al
         )
     if tool_calls:
         message["tool_calls"] = tool_calls
-    return message
+    return cast(AllMessageValues, message)

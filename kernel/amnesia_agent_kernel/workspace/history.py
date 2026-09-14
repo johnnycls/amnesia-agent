@@ -7,7 +7,7 @@ import tempfile
 import threading
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any, ClassVar, cast
 
 from litellm.types.llms.openai import AllMessageValues
 
@@ -98,7 +98,7 @@ class HistoryStore:
             not isinstance(value.get("tool_call_id"), str) or not value["tool_call_id"]
         ):
             raise ValueError(f"line {number} has an invalid tool call ID")
-        return value
+        return cast(AllMessageValues, value)
 
     def read_history(self, date: str | None = None) -> list[AllMessageValues]:
         with self._history_lock:

@@ -1,6 +1,6 @@
 """LLM message assembly and memory loading."""
 
-from typing import Any
+from typing import Any, cast
 
 from litellm.types.llms.openai import AllMessageValues
 
@@ -59,10 +59,13 @@ def build_messages(
             and isinstance(content, str)
             and len(content) > max_context_message_chars
         ):
-            truncated: AllMessageValues = {
-                **message,
-                "content": truncate_middle(content, max_context_message_chars),
-            }
+            truncated = cast(
+                AllMessageValues,
+                {
+                    **message,
+                    "content": truncate_middle(content, max_context_message_chars),
+                },
+            )
             messages.append(truncated)
         else:
             messages.append(message)

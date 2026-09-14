@@ -2,8 +2,8 @@
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator, Mapping
-from typing import Any
+from collections.abc import AsyncIterator, Mapping, Sequence
+from typing import Any, cast
 
 from litellm import acompletion
 from litellm.types.llms.openai import AllMessageValues
@@ -143,7 +143,9 @@ async def agent_turn(
             workspace.append_history(message)
             message_persisted = True
             yield AssistantMessage(message)
-            tool_calls = message.get("tool_calls", [])
+            tool_calls = cast(
+                Sequence[dict[str, Any]], message.get("tool_calls", [])
+            )
             if not tool_calls:
                 return
             turn_messages.append(message)
