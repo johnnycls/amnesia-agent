@@ -3,10 +3,7 @@
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from types import MappingProxyType
-from typing import Any, TypeAlias
-
-Message: TypeAlias = dict[str, Any]
-ScalarValue: TypeAlias = str | int | float | bool
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -16,7 +13,7 @@ class ProviderConfig:
     model: str
     api_key: str | None = None
     base_url: str | None = None
-    provider_params: Mapping[str, ScalarValue] | None = None
+    provider_params: Mapping[str, Any] | None = None
 
     def snapshot(self) -> "ProviderConfig":
         """Return an immutable defensive copy of this provider configuration."""
@@ -37,6 +34,6 @@ class ExecutionPolicy:
     isolation separately.
     """
 
-    command_timeout_seconds: float = 120.0
+    command_timeout_seconds: float = 1800.0
     max_command_output_bytes: int = 256 * 1024
     max_context_message_chars: int = 1000

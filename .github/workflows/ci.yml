@@ -7,35 +7,133 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 env:
   RENPY_VERSION: "8.5.3"
   RENPY_SDK_URL: https://www.renpy.org/dl/8.5.3/renpy-8.5.3-sdk.zip
 
 jobs:
-  lint:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      kernel: ${{ steps.select.outputs.kernel }}
+      cli: ${{ steps.select.outputs.cli }}
+      local_server: ${{ steps.select.outputs.local_server }}
+      electron: ${{ steps.select.outputs.electron }}
+      renpy: ${{ steps.select.outputs.renpy }}
+      workflows: ${{ steps.select.outputs.workflows }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dorny/paths-filter@v3
+        id: filter
+        if: github.event_name == 'push' || github.event_name == 'pull_request'
+        with:
+          filters: |
+            kernel:
+              - 'kernel/**'
+            cli:
+              - 'cli/**'
+            local_server:
+              - 'local_server/**'
+            electron:
+              - 'electron/**'
+            renpy:
+              - 'renpy/**'
+            workflows:
+              - '.github/workflows/**'
+      - id: select
+        shell: bash
+        run: |
+          set -euo pipefail
+          force_all=false
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]] || [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            force_all=true
+          fi
+
+          set_out() {
+            local name="$1"
+            local value="$2"
+            echo "${name}=${value}" >> "$GITHUB_OUTPUT"
+          }
+
+          if [[ "$force_all" == "true" ]]; then
+            set_out kernel true
+            set_out cli true
+            set_out local_server true
+            set_out electron true
+            set_out renpy true
+            set_out workflows true
+            exit 0
+          fi
+
+          kernel="${{ steps.filter.outputs.kernel }}"
+          cli="${{ steps.filter.outputs.cli }}"
+          local_server="${{ steps.filter.outputs.local_server }}"
+          electron="${{ steps.filter.outputs.electron }}"
+          renpy="${{ steps.filter.outputs.renpy }}"
+          workflows="${{ steps.filter.outputs.workflows }}"
+
+          # Workflow edits should still validate kernel CI paths at minimum.
+          if [[ "$workflows" == "true" ]]; then
+            kernel=true
+          fi
+
+          set_out kernel "$kernel"
+          set_out cli "$cli"
+          set_out local_server "$local_server"
+          set_out electron "$electron"
+          set_out renpy "$renpy"
+          set_out workflows "$workflows"
+
+  kernel-lint:
+    needs: changes
+    if: needs.changes.outputs.kernel == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - run: python -m pip install ./kernel
-      - run: python -m pip install ./cli ./local_server ruff mypy
+      - run: python -m pip install ./kernel ruff mypy
       - working-directory: kernel
         run: ruff check .
       - working-directory: kernel
         run: mypy
+
+  cli-lint:
+    needs: changes
+    if: needs.changes.outputs.cli == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: python -m pip install ./kernel ./cli ruff mypy
       - working-directory: cli
         run: ruff check .
       - working-directory: cli
         run: mypy
+
+  local-server-lint:
+    needs: changes
+    if: needs.changes.outputs.local_server == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: python -m pip install ./kernel ./local_server ruff mypy
       - working-directory: local_server
         run: ruff check .
       - working-directory: local_server
         run: mypy
 
-  test:
+  kernel-test:
+    needs: changes
+    if: needs.changes.outputs.kernel == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -48,17 +146,69 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - run: python -m pip install ./kernel
-      - run: python -m pip install ./cli ./local_server
       - working-directory: kernel
         run: python -m unittest discover -t . -s tests -v
+
+  cli-test:
+    needs: changes
+    if: needs.changes.outputs.cli == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.10", "3.14"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: python -m pip install ./kernel ./cli
       - working-directory: cli
         run: python -m unittest discover -t . -s tests -v
+
+  local-server-test:
+    needs: changes
+    if: needs.changes.outputs.local_server == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.10", "3.14"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: python -m pip install ./kernel ./local_server
       - working-directory: local_server
         run: python -m unittest discover -t . -s tests -v
+
+  renpy-test:
+    needs: changes
+    if: needs.changes.outputs.renpy == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.10", "3.14"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: python -m pip install ./kernel ./local_server
       - working-directory: renpy
         run: python -m unittest discover -t . -s tests -v
 
   kernel-build:
+    needs: changes
+    if: >-
+      needs.changes.outputs.kernel == 'true'
+      || needs.changes.outputs.cli == 'true'
+      || needs.changes.outputs.local_server == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -76,7 +226,8 @@ jobs:
           if-no-files-found: error
 
   cli-build:
-    needs: kernel-build
+    needs: [changes, kernel-build]
+    if: needs.changes.outputs.cli == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -99,7 +250,8 @@ jobs:
           if-no-files-found: error
 
   local-server-build:
-    needs: kernel-build
+    needs: [changes, kernel-build]
+    if: needs.changes.outputs.local_server == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -122,6 +274,8 @@ jobs:
           if-no-files-found: error
 
   electron-build:
+    needs: changes
+    if: needs.changes.outputs.electron == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -160,6 +314,8 @@ jobs:
           if-no-files-found: error
 
   renpy-build:
+    needs: changes
+    if: needs.changes.outputs.renpy == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -263,8 +419,14 @@ jobs:
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     needs:
-      - lint
-      - test
+      - changes
+      - kernel-lint
+      - cli-lint
+      - local-server-lint
+      - kernel-test
+      - cli-test
+      - local-server-test
+      - renpy-test
       - kernel-build
       - cli-build
       - local-server-build

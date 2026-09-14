@@ -29,9 +29,23 @@ class MessageTests(unittest.TestCase):
                 workspace,
             )
         self.assertEqual(messages[0]["role"], "system")
+        self.assertEqual(messages[0]["content"], "prompt")
         self.assertEqual(messages[1]["role"], "user")
         self.assertEqual(messages[1]["content"], "0123456789")
         self.assertEqual(messages[2]["content"], "\n...\n")
+
+    def test_empty_system_prompt_and_memory_omit_system_message(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Workspace(directory)
+            messages = build_messages("", "hi", [], 100, workspace)
+        self.assertEqual(messages, [{"role": "user", "content": "hi"}])
+
+    def test_joins_non_empty_system_prompt_and_memory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Workspace(directory)
+            workspace.update_memory("memo")
+            messages = build_messages("prompt", "hi", [], 100, workspace)
+        self.assertEqual(messages[0], {"role": "system", "content": "prompt\n\nmemo"})
 
 
 if __name__ == "__main__":

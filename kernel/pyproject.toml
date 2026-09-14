@@ -15,10 +15,10 @@ requires-python = ">=3.10,<3.15"
 dependencies = ["litellm==1.97.0"]
 
 [tool.setuptools]
-packages = ["amnesia_agent_kernel"]
+packages = ["amnesia_agent_kernel", "amnesia_agent_kernel.workspace"]
 
 [tool.setuptools.package-data]
-"amnesia_agent_kernel" = ["data/*", "py.typed"]
+"amnesia_agent_kernel" = ["py.typed"]
 
 [tool.ruff]
 target-version = "py310"

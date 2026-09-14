@@ -1,7 +1,8 @@
 """Events emitted by the kernel during an agent turn."""
 
 from dataclasses import dataclass
-from typing import Any
+
+from litellm.types.llms.openai import AllMessageValues
 
 
 @dataclass(frozen=True)
@@ -15,14 +16,14 @@ class Delta:
 class AssistantMessage:
     """One complete model response, including text and any tool calls."""
 
-    message: dict[str, Any]
+    message: AllMessageValues
 
 
 @dataclass(frozen=True)
 class ToolResult:
     """The result message of one executed tool call."""
 
-    message: dict[str, Any]
+    message: AllMessageValues
 
 
 Event = Delta | AssistantMessage | ToolResult

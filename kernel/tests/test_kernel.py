@@ -16,7 +16,7 @@ class KernelTests(unittest.IsolatedAsyncioTestCase):
         params = {"temperature": 0.1}
         with tempfile.TemporaryDirectory() as directory:
             with patch(
-                "amnesia_agent_kernel.agent.litellm.validate_environment",
+                "amnesia_agent_kernel.provider.litellm.validate_environment",
                 return_value={"keys_in_environment": True},
             ):
                 session = KernelSession(
@@ -26,40 +26,45 @@ class KernelTests(unittest.IsolatedAsyncioTestCase):
             params["unexpected"] = "changed"
             self.assertNotIn("unexpected", session.provider.provider_params or {})
 
-    def test_workspace_constructor_seeds_kernel_files(self) -> None:
+    def test_workspace_constructor_creates_empty_kernel_files(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             with patch(
-                "amnesia_agent_kernel.agent.litellm.validate_environment",
+                "amnesia_agent_kernel.provider.litellm.validate_environment",
                 return_value={"keys_in_environment": True},
             ):
                 session = KernelSession(self.make_config(), workspace_root=directory)
             for name in ("system_prompt.md", "memory.md"):
-                self.assertTrue((session._workspace.root / name).exists(), name)
+                path = session._workspace.root / name
+                self.assertTrue(path.exists(), name)
+                self.assertEqual(path.read_text(encoding="utf-8"), "")
             self.assertFalse((session._workspace.root / "history.jsonl").exists())
             self.assertFalse((session._workspace.root / "history").exists())
             self.assertFalse((session._workspace.root / "config.json").exists())
 
-    def test_workspace_reset_restores_prompt_memory_and_history(self) -> None:
+    def test_reset_history_clears_daily_files(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             with patch(
-                "amnesia_agent_kernel.agent.litellm.validate_environment",
+                "amnesia_agent_kernel.provider.litellm.validate_environment",
                 return_value={"keys_in_environment": True},
             ):
                 session = KernelSession(self.make_config(), workspace_root=directory)
             session.update_system_prompt("changed")
             session.update_memory("changed")
             session.update_history([{"role": "user", "content": "hi"}])
-            session.reset_workspace()
-            self.assertIn("# System Prompt", session.read_system_prompt())
-            self.assertIn("# Memory", session.read_memory())
+            session.reset_history()
+            self.assertEqual(session.read_system_prompt(), "changed")
+            self.assertEqual(session.read_memory(), "changed")
             self.assertEqual(session.read_history(), [])
+
+    def test_default_command_timeout_is_1800(self) -> None:
+        self.assertEqual(ExecutionPolicy().command_timeout_seconds, 1800.0)
 
     async def test_concurrent_turns_are_serialized(self) -> None:
         started: list[str] = []
 
         async def fake_completion(**kwargs: object) -> object:
             messages = kwargs["messages"]
-            started.append(messages[1]["content"])
+            started.append(messages[0]["content"])
             await asyncio.sleep(0.01)
 
             async def stream() -> object:
@@ -75,7 +80,7 @@ class KernelTests(unittest.IsolatedAsyncioTestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             with patch(
-                "amnesia_agent_kernel.agent.litellm.validate_environment",
+                "amnesia_agent_kernel.provider.litellm.validate_environment",
                 return_value={"keys_in_environment": True},
             ):
                 session = KernelSession(

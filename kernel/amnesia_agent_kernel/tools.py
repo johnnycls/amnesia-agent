@@ -11,8 +11,9 @@ import sys
 from collections.abc import Sequence
 from typing import Any
 
+from litellm.types.llms.openai import AllMessageValues
+
 from amnesia_agent_kernel.errors import ToolError
-from amnesia_agent_kernel.types import Message
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +79,32 @@ async def _terminate_process(proc: asyncio.subprocess.Process) -> None:
         raise ToolError(f"Could not wait for bash process: {e}", tool="bash") from e
 
 
+async def _kill_process_group(proc: asyncio.subprocess.Process) -> None:
+    """Signal the shell process group to exit without waiting for reaping."""
+    if proc.returncode is not None:
+        return
+    try:
+        if sys.platform == "win32":
+            killer = await asyncio.create_subprocess_exec(
+                "taskkill",
+                "/PID",
+                str(proc.pid),
+                "/T",
+                "/F",
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await killer.wait()
+            if proc.returncode is None:
+                proc.kill()
+        else:
+            os.killpg(proc.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    except (OSError, TypeError, ValueError) as e:
+        raise ToolError(f"Could not terminate bash process: {e}", tool="bash") from e
+
+
 class _OutputCollector:
     """Keep a bounded combined byte prefix from two output streams."""
 
@@ -141,8 +168,13 @@ async def _collect_output(
                 if task is waiter:
                     task.result()
                 elif task.result():
-                    await _terminate_process(proc)
-                    await asyncio.gather(*readers, return_exceptions=True)
+                    # Kill and cancel the concurrent waiter/readers. A second
+                    # Process.wait() can deadlock while pipe buffers are full;
+                    # run_bash reaps via communicate() afterward.
+                    await _kill_process_group(proc)
+                    for pending_task in readers | {waiter}:
+                        pending_task.cancel()
+                    await asyncio.gather(*readers, waiter, return_exceptions=True)
                     return
     except asyncio.CancelledError:
         try:
@@ -184,7 +216,7 @@ def _format_output(
 
 async def run_bash(
     command: str,
-    timeout_seconds: float = 120.0,
+    timeout_seconds: float = 1800.0,
     max_output_bytes: int = 256 * 1024,
 ) -> str:
     """Run a shell command with timeout and combined-output limits."""
@@ -256,7 +288,7 @@ def _tool_error_text(error: Exception) -> str:
 
 async def run_tool_call(
     call: dict[str, Any],
-    timeout_seconds: float = 120.0,
+    timeout_seconds: float = 1800.0,
     max_output_bytes: int = 256 * 1024,
 ) -> str:
     """Parse a tool call and run its bash command, returning result text."""
@@ -275,7 +307,7 @@ async def run_tool_call(
         return _tool_error_text(e)
 
 
-def _tool_message(call: dict[str, Any], content: str) -> Message:
+def _tool_message(call: dict[str, Any], content: str) -> AllMessageValues:
     """Build a tool-result message matching the given tool call."""
     call_id = call.get("id") if isinstance(call, dict) else None
     if not isinstance(call_id, str) or not call_id:
@@ -285,9 +317,9 @@ def _tool_message(call: dict[str, Any], content: str) -> Message:
 
 async def execute_tool_calls(
     tool_calls: Sequence[dict[str, Any]],
-    timeout_seconds: float = 120.0,
+    timeout_seconds: float = 1800.0,
     max_output_bytes: int = 256 * 1024,
-) -> list[Message]:
+) -> list[AllMessageValues]:
     """Execute all calls concurrently and return results in call order."""
     tasks = [
         asyncio.create_task(run_tool_call(call, timeout_seconds, max_output_bytes))
