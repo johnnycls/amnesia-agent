@@ -89,10 +89,6 @@ class SessionManager:
             workspace_root=resolved_workspace_root(config),
         )
 
-    def get_session(self) -> KernelSession:
-        """Build a fresh session (no cross-turn cache)."""
-        return self.build_session()
-
     def read_config(self) -> dict[str, Any]:
         return public_config(self.config_store.load())
 

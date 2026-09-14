@@ -208,14 +208,14 @@ class SessionTests(unittest.TestCase):
 
         asyncio.run(run())
 
-    def test_get_session_is_not_cached(self) -> None:
+    def test_build_session_is_not_cached(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = ConfigStore(directory)
             _write_config(store)
             manager = SessionManager(store)
             with patch("amnesia_agent_local_server.session.KernelSession", FakeSession):
-                first = manager.get_session()
-                second = manager.get_session()
+                first = manager.build_session()
+                second = manager.build_session()
             self.assertIsNot(first, second)
             self.assertEqual(len(FakeSession.created), 2)
 
