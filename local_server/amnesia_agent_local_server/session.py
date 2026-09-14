@@ -101,6 +101,7 @@ class SessionManager:
         return self.build_session().read_system_prompt()
 
     def update_system_prompt(self, content: str) -> str:
+        self.require_idle("update system prompt")
         self.build_session().update_system_prompt(content)
         return content
 
@@ -108,6 +109,7 @@ class SessionManager:
         return self.build_session().read_memory()
 
     def update_memory(self, content: str) -> str:
+        self.require_idle("update memory")
         self.build_session().update_memory(content)
         return content
 
@@ -122,6 +124,7 @@ class SessionManager:
         messages: Sequence[AllMessageValues],
         date: str | None = None,
     ) -> None:
+        self.require_idle("update history")
         self.build_session().update_history(messages, date)
 
     def reset_history(self) -> None:

@@ -44,7 +44,7 @@ containing a `ProviderConfig` and `ExecutionPolicy`.
 | `api_key` | string | `""` | API key for the provider |
 | `base_url` | string | `""` | Optional custom base URL |
 | `provider_params` | object | `{}` | Extra provider-specific parameters |
-| `command_timeout_seconds` | float | `120` | Bash command timeout |
+| `command_timeout_seconds` | float | `1800` | Shell command timeout |
 | `max_command_output_bytes` | int | `262144` | Max combined output per command (256 KiB) |
 | `max_context_message_chars` | int | `1000` | Max chars for non-user context messages |
 
@@ -56,7 +56,7 @@ Example:
   "api_key": "sk-...",
   "base_url": "",
   "provider_params": {},
-  "command_timeout_seconds": 120,
+  "command_timeout_seconds": 1800,
   "max_command_output_bytes": 262144,
   "max_context_message_chars": 1000
 }

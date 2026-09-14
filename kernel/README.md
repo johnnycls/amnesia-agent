@@ -70,13 +70,16 @@ response_format = {
     },
 }
 
-async for event in session.turn("Answer this", response_format=response_format):
-    if isinstance(event, str):
-        ...  # streamed delta
-    elif event["role"] == "assistant":
-        ...  # complete assistant message; JSON text is in event["content"]
-    elif event["role"] == "tool":
-        ...  # tool result
+from contextlib import aclosing
+
+async with aclosing(session.turn("Answer this", response_format=response_format)) as events:
+    async for event in events:
+        if isinstance(event, str):
+            ...  # streamed delta
+        elif event["role"] == "assistant":
+            ...  # complete assistant message; JSON text is in event["content"]
+        elif event["role"] == "tool":
+            ...  # tool result
 ```
 
 The kernel validates that the format contains only JSON-compatible values and
@@ -85,21 +88,33 @@ is still exposed as the model's JSON text in the assistant message `content`;
 the frontend can parse it with `json.loads` after receiving the complete message.
 Provider support for a particular structured-output format varies by model.
 
-Concurrent turns on one session are queued and serialized. Tool commands are
+Only one `KernelSession.turn` may be open at a time. Callers **must** wrap
+iteration in `contextlib.aclosing` (or call `aclose`) so the turn slot is
+released. Starting a second turn while a previous turn generator is still open
+raises `RuntimeError` immediately (fail loud). Tool commands within a turn are
 executed concurrently. Command timeout and output-limit failures are returned as
-tool-result text so the model can recover.
-The process group is terminated on timeout or output overflow.
+tool-result text so the model can recover. The process group is terminated on
+timeout, output overflow, or cancel during tool execution.
 
 History stores role messages only. Provider failures append a user message such as
-`error: ProviderError: ...` and then raise. Cancelling the turn task
-(`asyncio.CancelledError`) or closing the turn async generator (`aclose` /
-`contextlib.aclosing`) persists partial assistant text when present and a user
-message `user interrupted` when possible, then re-raises. Closing also best-effort
-closes the active LiteLLM provider stream (`CustomStreamWrapper.aclose()`); that
-stops further local consumption and asks the HTTP client to release the connection,
-but upstream providers may still bill or finish generating tokens. Prior daily
-history is not auto-replayed into the model context; only the current turn's
-messages are.
+`error: ProviderError: ...` and then raise. Prior daily history is not
+auto-replayed into the model context; only the current turn's messages are.
+
+### Cancel / aclose (three phases)
+
+Cancelling the turn task (`asyncio.CancelledError`) or closing the turn async
+generator (`aclose` / `contextlib.aclosing`) is phase-dependent. In all phases,
+partial assistant text (when present) and a user message `user interrupted` are
+persisted best-effort, then the cancel is re-raised.
+
+| Phase | What runs | Guaranteed locally | Best-effort / not guaranteed |
+|---|---|---|---|
+| **Pre-stream** | awaiting `acompletion` | interrupt marker when persist succeeds | in-flight provider HTTP may still complete or bill |
+| **Streaming** | iterating LiteLLM response | local consumption stops; `CustomStreamWrapper.aclose()` when present | upstream may still generate/bill tokens |
+| **Tools** | `execute_tool_calls` / shell | tool tasks cancelled; shell process group terminated (SIGKILL / `taskkill`) | earlier-phase provider billing unaffected |
+
+Upstream billing may continue after local cancel — the kernel does not claim a
+hard provider abort.
 
 ## Workspace operations
 

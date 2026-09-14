@@ -2,8 +2,6 @@ import contextlib
 import io
 import unittest
 
-from amnesia_agent_kernel.events import AssistantMessage, Delta, ToolResult
-
 from amnesia_agent_cli.display import TerminalRenderer, _print_tool, _tool_command
 
 
@@ -34,19 +32,14 @@ class DisplayTests(unittest.TestCase):
     def test_streamed_content_is_bold_and_not_printed_twice(self) -> None:
         message = {"role": "assistant", "content": "hello", "tool_calls": []}
         renderer = TerminalRenderer()
-        self.assertEqual(
-            render(renderer, Delta("hel")) + render(renderer, Delta("lo")),
-            "\x1b[1mhello",
-        )
-        self.assertEqual(
-            render(renderer, AssistantMessage(message)), "\x1b[0m\n"
-        )
+        self.assertEqual(render(renderer, "hel") + render(renderer, "lo"), "[1mhello")
+        self.assertEqual(render(renderer, message), "[0m\n")
 
     def test_unstreamed_assistant_content_is_printed_bold(self) -> None:
         message = {"role": "assistant", "content": "hi", "tool_calls": []}
-        output = render(TerminalRenderer(), AssistantMessage(message))
+        output = render(TerminalRenderer(), message)
         self.assertIn("hi", output)
-        self.assertTrue(output.startswith("\x1b[1m"))
+        self.assertTrue(output.startswith("[1m"))
 
     def test_assistant_tool_commands_are_rendered(self) -> None:
         message = {
@@ -56,29 +49,27 @@ class DisplayTests(unittest.TestCase):
                 {
                     "id": "c1",
                     "type": "function",
-                    "function": {"name": "bash", "arguments": '{"command": "ls"}'},
+                    "function": {"name": "shell", "arguments": '{"command": "ls"}'},
                 }
             ],
         }
-        output = render(TerminalRenderer(), AssistantMessage(message))
+        output = render(TerminalRenderer(), message)
         self.assertIn("$ ls", output)
 
     def test_tool_result_event_is_rendered(self) -> None:
-        result = ToolResult(
-            {"role": "tool", "tool_call_id": "c1", "content": "exit code: 0\nok"}
-        )
+        result = {"role": "tool", "tool_call_id": "c1", "content": "exit code: 0\nok"}
         self.assertIn("exit code 0", render(TerminalRenderer(), result))
 
     def test_reset_closes_a_half_finished_stream(self) -> None:
         renderer = TerminalRenderer()
         with contextlib.redirect_stdout(io.StringIO()):
-            renderer.render(Delta("partial"))
+            renderer.render("partial")
         closed = io.StringIO()
         with contextlib.redirect_stdout(closed):
             renderer.reset()
-        self.assertEqual(closed.getvalue(), "\x1b[0m\n")
-        output = render(renderer, AssistantMessage({"role": "assistant", "content": "x"}))
-        self.assertTrue(output.startswith("\x1b[1m"))
+        self.assertEqual(closed.getvalue(), "[0m\n")
+        output = render(renderer, {"role": "assistant", "content": "x"})
+        self.assertTrue(output.startswith("[1m"))
 
 
 if __name__ == "__main__":

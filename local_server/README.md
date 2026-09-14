@@ -106,14 +106,20 @@ Server-Sent Events stream. Kernel `turn` yields `str` deltas and role messages
 ```text
 data: {"type":"delta","data":{"text":"..."}}
 data: {"type":"assistant","data":{"content":"...","tool_calls":[],"structured":true,"answer":"...","choices":[...]}}
-data: {"type":"tool_call","data":{"content":"...","tool_calls":[...]}}
+data: {"type":"assistant","data":{"content":"...","tool_calls":[...]}}
 data: {"type":"tool_result","data":{"content":"..."}}
 data: {"type":"done","data":{}}
 data: {"type":"error","data":{"error_type":"...","message":"..."}}
 ```
 
+- **All** assistant role messages use `type: "assistant"` with `tool_calls` in
+  `data` (empty list when the model did not call tools). There is **no** separate
+  `type: "tool_call"` envelope (breaking change for clients that switched on
+  that type — inspect `data.tool_calls` instead). `tool_result` remains for
+  `role=tool`.
 - `assistant` events parse structured JSON (`answer` / `choices`) when content
-  matches a schema the client requested; otherwise `structured` is false.
+  matches a schema the client requested and there are no tool calls; otherwise
+  `structured` is false / omitted for tool-calling assistants.
 - Malformed assistant/tool content (non-string content, non-list `tool_calls`)
   and unknown kernel event shapes fail loud as an `error` envelope
   (`ServerError`).
@@ -177,9 +183,11 @@ POST /v1/workspace/history/reset        → {"reset": true}
 optional `date` defaults to today when omitted/null.
 
 Suggested open flow: **check → if not ok, setup-or-repair or create-or-reset →
-then read/update / turn**. Setup/repair, create/reset, history reset, and config
-changes return **409** while a turn is active. Changing `workspace_path` does
-not need a special session invalidate (sessions are not cached across turns).
+then read/update / turn**. While a turn is active, **all workspace writes**
+return **409** via `require_idle`: `update_system_prompt`, `update_memory`,
+`update_history`, history reset, setup/repair, create/reset, and config changes.
+Reads stay allowed. Changing `workspace_path` does not need a special session
+invalidate (sessions are not cached across turns).
 
 ### Shutdown
 
@@ -244,6 +252,14 @@ memory reset URLs and any assumption that history cannot be updated over HTTP
 are obsolete. Clients that previously assumed every turn used
 `answer_with_choices` must now pass that schema (or another) as
 `response_format`.
+
+8. **SSE assistant envelope** — assistant messages with `tool_calls` are always
+   `type: "assistant"` (no `type: "tool_call"`). Clients must branch on
+   `data.tool_calls`.
+9. **Idle write policy** — mid-turn `PUT` system-prompt / memory / history returns
+   **409** (same as config and lifecycle writes).
+10. **Default `command_timeout_seconds`** — **1800** (aligned with kernel `ExecutionPolicy`).
+
 
 ## Troubleshooting
 

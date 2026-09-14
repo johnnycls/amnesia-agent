@@ -223,6 +223,81 @@ class AgentTurnTests(unittest.IsolatedAsyncioTestCase):
             )
 
 
+    async def test_cancel_during_pending_acompletion(self) -> None:
+        started = asyncio.Event()
+
+        async def hanging_completion(**kwargs: Any) -> Any:
+            started.set()
+            await asyncio.sleep(60)
+            return stream(chunk(content="unreachable"))
+
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Workspace(directory)
+            with patch("amnesia_agent_kernel.agent.acompletion", new=hanging_completion):
+
+                async def consume() -> None:
+                    agen = agent_turn(make_config(), ExecutionPolicy(), workspace, "hi")
+                    async with aclosing(agen):
+                        async for _event in agen:
+                            pass
+
+                task = asyncio.create_task(consume())
+                await started.wait()
+                task.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await task
+            history = workspace.read_history()
+            self.assertTrue(
+                any("user interrupted" in str(item.get("content", "")) for item in history)
+            )
+
+    async def test_cancel_during_tool_execution_cancels_tools(self) -> None:
+        tool_started = asyncio.Event()
+        tool_cancelled = asyncio.Event()
+
+        async def fake_completion(**kwargs: Any) -> Any:
+            return stream(
+                chunk(
+                    tool_calls=[
+                        call_delta(
+                            0, call_id="c1", name="shell", arguments='{"command":"sleep 60"}'
+                        )
+                    ]
+                )
+            )
+
+        async def hanging_tools(*args: Any, **kwargs: Any) -> Any:
+            tool_started.set()
+            try:
+                await asyncio.sleep(60)
+            except asyncio.CancelledError:
+                tool_cancelled.set()
+                raise
+            return [{"role": "tool", "tool_call_id": "c1", "content": "unreachable"}]
+
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Workspace(directory)
+            with (
+                patch("amnesia_agent_kernel.agent.acompletion", new=fake_completion),
+                patch("amnesia_agent_kernel.agent.execute_tool_calls", new=hanging_tools),
+            ):
+
+                async def consume() -> None:
+                    agen = agent_turn(make_config(), ExecutionPolicy(), workspace, "hi")
+                    async with aclosing(agen):
+                        async for _event in agen:
+                            pass
+
+                task = asyncio.create_task(consume())
+                await tool_started.wait()
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+            self.assertTrue(tool_cancelled.is_set())
+            history = workspace.read_history()
+            self.assertTrue(
+                any("user interrupted" in str(item.get("content", "")) for item in history)
+            )
+
     async def test_request_kwargs_give_config_priority_over_provider_params(self) -> None:
         config = ProviderConfig(
             model="openai/test",

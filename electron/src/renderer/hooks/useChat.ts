@@ -14,9 +14,15 @@ export function useChat(serverStatus: ServerStatus, loadWorkspace: () => Promise
     const data = event.data;
     if (event.type === 'delta') { setStreamingText((current) => current + String(data.text ?? '')); return; }
     if (event.type === 'assistant') {
+      const toolCalls = Array.isArray(data.tool_calls) ? data.tool_calls : [];
+      if (toolCalls.length > 0) {
+        setMessages((current) => [...current, { id: uid(), role: 'tool_call', text: t('toolCall'), data }]);
+        return;
+      }
       const choices = Array.isArray(data.choices) ? data.choices.filter((choice): choice is string => typeof choice === 'string') : [];
       setStreamingText(''); setMessages((current) => [...current, { id: uid(), role: 'assistant', text: typeof data.answer === 'string' ? data.answer : String(data.content ?? ''), choices }]); return;
     }
+    // Legacy wire type (pre-unify); keep for older servers.
     if (event.type === 'tool_call') { setMessages((current) => [...current, { id: uid(), role: 'tool_call', text: t('toolCall'), data }]); return; }
     if (event.type === 'tool_result') { setMessages((current) => [...current, { id: uid(), role: 'tool_result', text: String(data.content ?? ''), data }]); return; }
     if (event.type === 'error') { setMessages((current) => [...current, { id: uid(), role: 'error', text: String(data.message ?? 'The turn failed.') }]); setStreamingText(''); setBusy(false); return; }

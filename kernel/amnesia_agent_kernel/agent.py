@@ -68,8 +68,25 @@ async def agent_turn(
     Yields streamed text deltas as ``str``, then complete assistant or tool
     messages as ``AllMessageValues`` (distinguish via ``role``).
 
-    Closing this async generator (``aclose`` / ``aclosing``) closes the active
-    LiteLLM stream when possible and persists a best-effort interrupt marker.
+    Cancel / ``aclose`` behavior is phase-dependent (honesty over optimism):
+
+    * **Pre-stream** (awaiting ``acompletion``): cancellation raises into the
+      await; an interrupt marker is persisted when possible. There is no local
+      stream to close yet; the in-flight HTTP request to the provider may still
+      complete or bill upstream.
+    * **Streaming** (iterating the LiteLLM response): ``aclose`` /
+      ``aclosing`` closes the active ``CustomStreamWrapper`` when present,
+      stops local consumption, and asks the HTTP client to release the
+      connection. Upstream providers may still finish generating or bill
+      tokens — best-effort, not a hard abort guarantee.
+    * **Tools** (``execute_tool_calls`` / shell): cancellation cancels tool
+      tasks and terminates the shell process group (SIGKILL / ``taskkill``).
+      That local process kill is guaranteed when cleanup runs; any provider
+      billing from earlier phases is unaffected.
+
+    In all phases, partial assistant text (when present) and a user message
+    ``user interrupted`` are persisted best-effort, then the cancel is
+    re-raised.
     """
     if not isinstance(user_input, str):
         raise ConfigError("user_input must be text")

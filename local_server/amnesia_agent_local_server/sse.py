@@ -25,10 +25,9 @@ def event_envelope(event: str | AllMessageValues) -> dict[str, Any]:
     if isinstance(event, Mapping):
         role = event.get("role")
         if role == "assistant":
-            data = _assistant_data(event)
-            if data.get("tool_calls"):
-                return {"type": "tool_call", "data": data}
-            return {"type": "assistant", "data": data}
+            # Always "assistant" (with tool_calls empty or not). Breaking change:
+            # frontends that switched on type "tool_call" must use data.tool_calls.
+            return {"type": "assistant", "data": _assistant_data(event)}
         if role == "tool":
             return {"type": "tool_result", "data": _tool_data(event)}
     raise ValueError(f"Unexpected kernel event type: {type(event).__name__!r}")
