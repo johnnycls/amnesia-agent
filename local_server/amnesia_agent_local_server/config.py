@@ -4,11 +4,9 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 from dataclasses import dataclass
-from importlib.resources import files
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Final, cast
 
 from amnesia_agent_kernel import (
     ConfigError,
@@ -19,25 +17,56 @@ from amnesia_agent_kernel import (
 )
 
 DEFAULT_CONFIG_DIR = Path.home() / ".amnesia-agent-local-server"
-_CONFIG_KEYS = frozenset(
-    {
-        "model",
-        "api_key",
-        "base_url",
-        "provider_params",
-        "command_timeout_seconds",
-        "max_command_output_bytes",
-        "max_context_message_chars",
-    }
+
+# Importable defaults (also used to seed / reset the persisted file).
+DEFAULT_MODEL: Final[str] = ""
+DEFAULT_API_KEY: Final[str] = ""
+DEFAULT_BASE_URL: Final[str] = ""
+DEFAULT_PROVIDER_PARAMS: Final[dict[str, Any]] = {}
+DEFAULT_COMMAND_TIMEOUT_SECONDS: Final[float] = 120.0
+DEFAULT_MAX_COMMAND_OUTPUT_BYTES: Final[int] = 256 * 1024
+DEFAULT_MAX_CONTEXT_MESSAGE_CHARS: Final[int] = 1000
+
+CONFIG_FIELDS: Final[tuple[str, ...]] = (
+    "model",
+    "api_key",
+    "base_url",
+    "provider_params",
+    "command_timeout_seconds",
+    "max_command_output_bytes",
+    "max_context_message_chars",
 )
+_CONFIG_KEYS = frozenset(CONFIG_FIELDS)
 
 
-def _packaged_config() -> Any:
-    return files("amnesia_agent_local_server").joinpath("data", "config.json")
+def default_config_dict() -> dict[str, Any]:
+    """Return a fresh JSON-serializable defaults dict from constants."""
+    return {
+        "model": DEFAULT_MODEL,
+        "api_key": DEFAULT_API_KEY,
+        "base_url": DEFAULT_BASE_URL,
+        "provider_params": dict(DEFAULT_PROVIDER_PARAMS),
+        "command_timeout_seconds": DEFAULT_COMMAND_TIMEOUT_SECONDS,
+        "max_command_output_bytes": DEFAULT_MAX_COMMAND_OUTPUT_BYTES,
+        "max_context_message_chars": DEFAULT_MAX_CONTEXT_MESSAGE_CHARS,
+    }
 
 
 def _blank_as_none(value: Any) -> Any:
     return None if value == "" else value
+
+
+def _resolve_root(root: str | os.PathLike[str] | None) -> Path:
+    if root is None:
+        return DEFAULT_CONFIG_DIR
+    if isinstance(root, bool) or not isinstance(root, (str, os.PathLike)):
+        raise ConfigError(f"Invalid config root {root!r}")
+    if root == "":
+        raise ConfigError("Config root must not be empty.")
+    try:
+        return Path(root).expanduser().absolute()
+    except (OSError, TypeError, ValueError) as error:
+        raise ConfigError(f"Invalid config root {root!r}: {error}") from error
 
 
 @dataclass(frozen=True)
@@ -48,57 +77,66 @@ class LoadedConfig:
     policy: ExecutionPolicy
 
 
+def config_to_raw(config: LoadedConfig) -> dict[str, Any]:
+    """Serialize a loaded config to the on-disk JSON object shape."""
+    return {
+        "model": config.provider.model,
+        "api_key": config.provider.api_key or "",
+        "base_url": config.provider.base_url or "",
+        "provider_params": dict(config.provider.provider_params or {}),
+        "command_timeout_seconds": config.policy.command_timeout_seconds,
+        "max_command_output_bytes": config.policy.max_command_output_bytes,
+        "max_context_message_chars": config.policy.max_context_message_chars,
+    }
+
+
 class ConfigStore:
     """Load, save, and reset ``~/.amnesia-agent-local-server/config.json``."""
 
     def __init__(self, root: str | os.PathLike[str] | None = None) -> None:
-        if root is not None and (
-            isinstance(root, bool) or not isinstance(root, (str, os.PathLike))
-        ):
-            raise ConfigError(f"Invalid config root {root!r}")
-        if root == "":
-            raise ConfigError("Config root must not be empty.")
-        try:
-            self.root = (
-                Path(root).expanduser().absolute() if root is not None else DEFAULT_CONFIG_DIR
-            )
-        except (OSError, TypeError, ValueError) as error:
-            raise ConfigError(f"Invalid config root {root!r}: {error}") from error
+        self.root = _resolve_root(root)
 
     @property
     def path(self) -> Path:
         return self.root / "config.json"
 
-    def setup(self) -> None:
-        """Create the directory and seed a missing configuration file."""
+    def _atomic_write(self, raw: dict[str, Any]) -> None:
+        temporary = self.path.with_suffix(".tmp")
         try:
             self.root.mkdir(parents=True, exist_ok=True)
-            if not self.path.exists():
-                shutil.copyfile(str(_packaged_config()), self.path)
-        except (ModuleNotFoundError, OSError, TypeError, ValueError) as error:
+            temporary.write_text(json.dumps(raw, indent=2) + "\n", encoding="utf-8")
+            temporary.replace(self.path)
+        except OSError as error:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
             raise ConfigError(
-                f"Cannot initialize config {self.path}: {error}", path=str(self.path)
+                f"Cannot write config {self.path}: {error}", path=str(self.path)
             ) from error
 
+    def write_defaults(self) -> None:
+        """Rewrite ``config.json`` from importable defaults constants."""
+        self._atomic_write(default_config_dict())
+
+    def setup(self) -> None:
+        """Seed a missing configuration file from defaults constants."""
+        if not self.path.exists():
+            self.write_defaults()
+
     def reset(self) -> LoadedConfig:
-        """Restore packaged defaults and return the validated result."""
-        try:
-            self.root.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(str(_packaged_config()), self.path)
-        except (ModuleNotFoundError, OSError, TypeError, ValueError) as error:
-            raise ConfigError(
-                f"Cannot reset config {self.path}: {error}", path=str(self.path)
-            ) from error
+        """Rewrite defaults from constants and return the validated result."""
+        self.write_defaults()
         return self.load()
 
     def load(self) -> LoadedConfig:
         """Load and validate the JSON configuration.
 
-        A missing file is lazy-created from packaged defaults. Corrupt or invalid
-        files raise ``ConfigError`` (no auto-repair).
+        A missing file is lazy-created from defaults constants. Corrupt or
+        invalid files raise ``ConfigError`` (no auto-repair).
         """
         if not self.path.exists():
-            self.setup()
+            self.write_defaults()
         try:
             with self.path.open(encoding="utf-8-sig") as file:
                 raw_value: Any = json.load(file)
@@ -116,28 +154,7 @@ class ConfigStore:
         """Validate and atomically persist a configuration snapshot."""
         _validate_provider(config.provider)
         validate_execution_policy(config.policy)
-        raw = {
-            "model": config.provider.model,
-            "api_key": config.provider.api_key or "",
-            "base_url": config.provider.base_url or "",
-            "provider_params": dict(config.provider.provider_params or {}),
-            "command_timeout_seconds": config.policy.command_timeout_seconds,
-            "max_command_output_bytes": config.policy.max_command_output_bytes,
-            "max_context_message_chars": config.policy.max_context_message_chars,
-        }
-        temporary = self.path.with_suffix(".tmp")
-        try:
-            self.root.mkdir(parents=True, exist_ok=True)
-            temporary.write_text(json.dumps(raw, indent=2) + "\n", encoding="utf-8")
-            temporary.replace(self.path)
-        except OSError as error:
-            try:
-                temporary.unlink(missing_ok=True)
-            except OSError:
-                pass
-            raise ConfigError(
-                f"Cannot write config {self.path}: {error}", path=str(self.path)
-            ) from error
+        self._atomic_write(config_to_raw(config))
 
     def _parse(self, raw_value: Any) -> LoadedConfig:
         if not isinstance(raw_value, dict):
@@ -150,15 +167,21 @@ class ConfigStore:
             )
         raw = raw_value
         provider = ProviderConfig(
-            model=cast(str, raw.get("model", "")),
-            api_key=_blank_as_none(raw.get("api_key")),
-            base_url=_blank_as_none(raw.get("base_url")),
-            provider_params=raw.get("provider_params"),
+            model=cast(str, raw.get("model", DEFAULT_MODEL)),
+            api_key=_blank_as_none(raw.get("api_key", DEFAULT_API_KEY)),
+            base_url=_blank_as_none(raw.get("base_url", DEFAULT_BASE_URL)),
+            provider_params=raw.get("provider_params", dict(DEFAULT_PROVIDER_PARAMS)),
         )
         policy = ExecutionPolicy(
-            command_timeout_seconds=raw.get("command_timeout_seconds", 120.0),
-            max_command_output_bytes=raw.get("max_command_output_bytes", 256 * 1024),
-            max_context_message_chars=raw.get("max_context_message_chars", 1000),
+            command_timeout_seconds=raw.get(
+                "command_timeout_seconds", DEFAULT_COMMAND_TIMEOUT_SECONDS
+            ),
+            max_command_output_bytes=raw.get(
+                "max_command_output_bytes", DEFAULT_MAX_COMMAND_OUTPUT_BYTES
+            ),
+            max_context_message_chars=raw.get(
+                "max_context_message_chars", DEFAULT_MAX_CONTEXT_MESSAGE_CHARS
+            ),
         )
         try:
             _validate_provider(provider)
@@ -182,13 +205,14 @@ def _validate_provider(provider: ProviderConfig) -> None:
 
 def public_config(config: LoadedConfig) -> dict[str, Any]:
     """Return config safe for clients; never disclose the API key."""
+    raw = config_to_raw(config)
     return {
-        "model": config.provider.model,
+        "model": raw["model"],
         "api_key": None,
         "api_key_set": config.provider.api_key is not None,
-        "base_url": config.provider.base_url,
-        "provider_params": dict(config.provider.provider_params or {}),
-        "command_timeout_seconds": config.policy.command_timeout_seconds,
-        "max_command_output_bytes": config.policy.max_command_output_bytes,
-        "max_context_message_chars": config.policy.max_context_message_chars,
+        "base_url": raw["base_url"] or None,
+        "provider_params": raw["provider_params"],
+        "command_timeout_seconds": raw["command_timeout_seconds"],
+        "max_command_output_bytes": raw["max_command_output_bytes"],
+        "max_context_message_chars": raw["max_context_message_chars"],
     }

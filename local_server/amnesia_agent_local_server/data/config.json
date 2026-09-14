@@ -1,9 +1,0 @@
-{
-  "model": "",
-  "api_key": "",
-  "base_url": "",
-  "provider_params": {},
-  "command_timeout_seconds": 120,
-  "max_command_output_bytes": 262144,
-  "max_context_message_chars": 1000
-}

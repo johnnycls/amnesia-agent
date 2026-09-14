@@ -1,6 +1,8 @@
+import asyncio
 import json
 import tempfile
 import unittest
+from contextlib import aclosing
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -175,6 +177,51 @@ class AgentTurnTests(unittest.IsolatedAsyncioTestCase):
                         {"type": object()},
                     )
                 ]
+
+
+    async def test_aclose_closes_provider_stream(self) -> None:
+        class ClosingStream:
+            def __init__(self, chunks: list[Any]) -> None:
+                self._chunks = list(chunks)
+                self.closed = False
+
+            def __aiter__(self) -> "ClosingStream":
+                return self
+
+            async def __anext__(self) -> Any:
+                if not self._chunks:
+                    raise StopAsyncIteration
+                item = self._chunks.pop(0)
+                if item is None:
+                    await asyncio.sleep(60)
+                    raise StopAsyncIteration
+                return item
+
+            async def aclose(self) -> None:
+                self.closed = True
+
+        held: list[ClosingStream] = []
+
+        async def fake_completion(**kwargs: Any) -> Any:
+            stream_obj = ClosingStream([chunk(content="hi"), None])
+            held.append(stream_obj)
+            return stream_obj
+
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Workspace(directory)
+            with patch("amnesia_agent_kernel.agent.acompletion", new=fake_completion):
+                agen = agent_turn(make_config(), ExecutionPolicy(), workspace, "hi")
+                async with aclosing(agen):
+                    first = await agen.__anext__()
+                    self.assertEqual(first, "hi")
+                    await agen.aclose()
+            self.assertEqual(len(held), 1)
+            self.assertTrue(held[0].closed)
+            history = workspace.read_history()
+            self.assertTrue(
+                any("user interrupted" in str(item.get("content", "")) for item in history)
+            )
+
 
     async def test_request_kwargs_give_config_priority_over_provider_params(self) -> None:
         config = ProviderConfig(

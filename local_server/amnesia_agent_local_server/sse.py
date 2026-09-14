@@ -36,11 +36,20 @@ def event_envelope(event: str | AllMessageValues) -> dict[str, Any]:
 
 def _assistant_data(message: Mapping[str, Any]) -> dict[str, Any]:
     content = message.get("content")
-    if not isinstance(content, str):
-        content = "" if content is None else str(content)
-    calls = message.get("tool_calls", [])
-    if not isinstance(calls, list):
-        calls = []
+    if content is None:
+        content = ""
+    elif not isinstance(content, str):
+        raise ValueError(
+            f"Assistant message content must be str or None, got {type(content).__name__}"
+        )
+    if "tool_calls" not in message:
+        calls: list[Any] = []
+    else:
+        calls = message["tool_calls"]
+        if not isinstance(calls, list):
+            raise ValueError(
+                f"Assistant tool_calls must be a list, got {type(calls).__name__}"
+            )
     data: dict[str, Any] = {"content": content, "tool_calls": calls}
     if not calls:
         structured = _parse_structured_answer(content)
@@ -69,4 +78,6 @@ def _parse_structured_answer(content: str) -> dict[str, Any] | None:
 
 def _tool_data(message: Mapping[str, Any]) -> dict[str, Any]:
     content = message.get("content")
-    return {"content": content if isinstance(content, str) else str(content)}
+    if not isinstance(content, str):
+        raise ValueError(f"Tool message content must be str, got {type(content).__name__}")
+    return {"content": content}

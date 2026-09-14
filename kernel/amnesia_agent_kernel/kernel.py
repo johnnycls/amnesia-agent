@@ -2,7 +2,8 @@
 
 import asyncio
 import os
-from collections.abc import AsyncIterator, Mapping, Sequence
+from collections.abc import AsyncGenerator, Mapping, Sequence
+from contextlib import aclosing
 from typing import Any
 
 from litellm.types.llms.openai import AllMessageValues
@@ -70,20 +71,22 @@ class KernelSession:
         self,
         user_input: str,
         response_format: Mapping[str, Any] | None = None,
-    ) -> AsyncIterator[str | AllMessageValues]:
+    ) -> AsyncGenerator[str | AllMessageValues, None]:
         """Queue and stream one turn, optionally requesting structured output.
 
         Yields ``str`` deltas and ``AllMessageValues`` assistant/tool messages.
         """
         async with self._turn_lock:
-            async for event in agent_turn(
+            events = agent_turn(
                 self.provider,
                 self.policy,
                 self._workspace,
                 user_input,
                 response_format,
-            ):
-                yield event
+            )
+            async with aclosing(events):
+                async for event in events:
+                    yield event
 
     def read_system_prompt(self) -> str:
         return self._workspace.read_system_prompt()

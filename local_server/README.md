@@ -35,22 +35,24 @@ loopback and run it only on a trusted machine.
 
 ```text
 amnesia_agent_local_server/
-├── config.py       # ConfigStore at ~/.amnesia-agent-local-server/config.json
-├── session.py      # SessionManager: KernelSession rebuild, turn busy lock
+├── config.py       # defaults constants + ConfigStore persistence
+├── session.py      # SessionManager: KernelSession rebuild, turn busy flag
 ├── sse.py          # str | AllMessageValues → SSE envelopes (fail-loud)
 ├── routes/         # thin routers: health, config, workspace, turn, shutdown
 ├── app.py          # FastAPI assembly + exception → HTTP JSON mapping
-├── __main__.py     # CLI entry (loopback bind)
-└── data/config.json
+└── __main__.py     # CLI entry (loopback bind; wires uvicorn for /shutdown)
 ```
 
 ## Configuration
 
-Stored at `~/.amnesia-agent-local-server/config.json` (separate from the kernel
-workspace at `~/.amnesia-agent/`). Schema matches the CLI. Missing file is
-lazy-created from packaged defaults. Corrupt/invalid config fails loud with an
-HTTP error — it is **not** auto-repaired. Restore defaults only via
-`POST /v1/config/reset`.
+Defaults live as importable Python constants in `amnesia_agent_local_server.config`
+(`DEFAULT_MODEL`, `DEFAULT_COMMAND_TIMEOUT_SECONDS`, … / `default_config_dict()`).
+They are persisted at `~/.amnesia-agent-local-server/config.json` (separate from
+the kernel workspace at `~/.amnesia-agent/`). Schema matches the CLI.
+
+- Missing file: lazy-created from those constants.
+- Corrupt/invalid config: fail loud with an HTTP error — **not** auto-repaired.
+- Restore defaults only via `POST /v1/config/reset` (rewrites from constants).
 
 Public responses mask the API key: `api_key` is always `null` and
 `api_key_set: boolean` indicates whether a key is stored.
@@ -58,7 +60,8 @@ Public responses mask the API key: `api_key` is always `null` and
 ## HTTP API (`/v1`)
 
 Path/method names follow `KernelSession` (kebab-case for multi-word methods).
-There is no parallel synonym vocabulary.
+There is no parallel synonym vocabulary. `/v1` is applied once at app include
+time; workspace/config routers own their `/workspace` and `/config` prefixes.
 
 ### Health
 
@@ -75,7 +78,7 @@ servers on a contested port.
 ```text
 GET  /v1/config           → public config (api_key masked)
 PUT  /v1/config           → partial update (any subset of keys)
-POST /v1/config/reset     → restore packaged defaults
+POST /v1/config/reset     → rewrite defaults from constants
 ```
 
 Config changes invalidate the cached `KernelSession` and return **409** while a
@@ -101,10 +104,18 @@ data: {"type":"error","data":{"error_type":"...","message":"..."}}
 
 - `assistant` events parse structured JSON (`answer` / `choices`) when content
   matches the requested schema; otherwise `structured` is false.
-- Unknown kernel event shapes fail loud as an `error` envelope (`ServerError`).
+- Malformed assistant/tool content (non-string content, non-list `tool_calls`)
+  and unknown kernel event shapes fail loud as an `error` envelope
+  (`ServerError`).
 - **409** if a turn is already active (one at a time).
 - Cancel an in-progress turn **only** by disconnecting the SSE stream — there is
   no explicit cancel endpoint.
+- On disconnect, the server `aclose`s the turn generator chain through
+  `KernelSession.turn` → `agent_turn` → LiteLLM `CustomStreamWrapper.aclose()`
+  when present, releases the busy flag, and releases the kernel turn lock.
+  That is **best-effort**: local streaming stops and the HTTP connection to the
+  provider is asked to close, but providers may still finish generating or bill
+  tokens. There is no hard guarantee of immediate upstream abort.
 - Turns request structured output (`answer_with_choices`) when the provider
   supports it.
 
@@ -144,8 +155,15 @@ invalidate the cached `KernelSession`.
 POST /v1/shutdown  → {"shutting_down": true}
 ```
 
-Signals uvicorn to exit after in-flight work finishes. Kept for desktop
-frontends that spawn the process.
+Available only when the process was started via the official
+`amnesia-agent-local-server` / `__main__` entrypoint (which wires
+`app.state.uvicorn_server`). Otherwise the endpoint returns **503** with a JSON
+`detail` — it does **not** pretend to shut down.
+
+On success it best-effort cancels any in-flight turn (same `aclose` chain as SSE
+disconnect) and sets uvicorn `should_exit` so the process can exit instead of
+waiting forever on an open LLM stream. Kept for desktop frontends that spawn the
+process.
 
 ## Error handling
 
@@ -157,6 +175,7 @@ They do **not** escape as bare ASGI exceptions.
 |---|---|
 | Request body validation | 422 |
 | Turn already active / mutate during turn | 409 |
+| Shutdown without official entrypoint | 503 |
 | `ConfigError` / `WorkspaceError` / `AgentError` / `ValueError` / `OSError` | 400 |
 
 Turn-time kernel errors are delivered as SSE `error` envelopes, not as HTTP
@@ -178,6 +197,8 @@ Relative to the pre-rewrite `service.py` / monolithic `app.py` layout:
    `POST /v1/workspace/system-prompt/reset` and
    `POST /v1/workspace/memory/reset` do not exist; use setup/repair or
    create/reset.
+5. **Config defaults** — no packaged `data/config.json`; defaults are Python
+   constants. `/shutdown` is honest when uvicorn is not wired (503).
 
 **Frontends (Electron, Ren'Py) must follow these HTTP changes.** Soft prompt /
 memory reset URLs and any assumption that history cannot be updated over HTTP
@@ -192,3 +213,7 @@ the SSE connection to cancel.
 
 **Corrupt config** — Fix or delete `~/.amnesia-agent-local-server/config.json`,
 or call `POST /v1/config/reset`. The server will not silently rewrite a bad file.
+
+**503 on `/v1/shutdown`** — The ASGI app was created without the official
+entrypoint wiring (`uvicorn_server` is unset), e.g. under a test client or a
+custom host. Start via `amnesia-agent-local-server` for shutdown support.

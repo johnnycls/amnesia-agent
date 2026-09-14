@@ -7,7 +7,7 @@ from typing import Any
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
-router = APIRouter(tags=["config"])
+router = APIRouter(prefix="/config", tags=["config"])
 
 
 class ConfigUpdate(BaseModel):
@@ -22,12 +22,12 @@ class ConfigUpdate(BaseModel):
     max_context_message_chars: int | None = None
 
 
-@router.get("/config")
+@router.get("")
 def read_config(request: Request) -> dict[str, Any]:
     return request.app.state.session.read_config()  # type: ignore[no-any-return]
 
 
-@router.put("/config")
+@router.put("")
 def update_config(update: ConfigUpdate, request: Request) -> dict[str, Any]:
     raw_fields = getattr(update, "model_fields_set", None)
     if raw_fields is None:
@@ -36,6 +36,6 @@ def update_config(update: ConfigUpdate, request: Request) -> dict[str, Any]:
     return request.app.state.session.update_config(fields)  # type: ignore[no-any-return]
 
 
-@router.post("/config/reset")
+@router.post("/reset")
 def reset_config(request: Request) -> dict[str, Any]:
     return request.app.state.session.reset_config()  # type: ignore[no-any-return]
