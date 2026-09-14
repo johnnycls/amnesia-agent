@@ -8,7 +8,6 @@ from typing import Any
 from litellm.types.llms.openai import AllMessageValues
 
 from amnesia_agent_kernel.agent import agent_turn
-from amnesia_agent_kernel.events import Event
 from amnesia_agent_kernel.provider import validate_execution_policy, validate_provider_config
 from amnesia_agent_kernel.types import ExecutionPolicy, ProviderConfig
 from amnesia_agent_kernel.workspace import Workspace
@@ -35,8 +34,11 @@ class KernelSession:
         self,
         user_input: str,
         response_format: Mapping[str, Any] | None = None,
-    ) -> AsyncIterator[Event]:
-        """Queue and stream one turn, optionally requesting structured output."""
+    ) -> AsyncIterator[str | AllMessageValues]:
+        """Queue and stream one turn, optionally requesting structured output.
+
+        Yields ``str`` deltas and ``AllMessageValues`` assistant/tool messages.
+        """
         async with self._turn_lock:
             async for event in agent_turn(
                 self.provider,
@@ -65,9 +67,7 @@ class KernelSession:
     def list_history(self) -> list[str]:
         return self._workspace.list_history()
 
-    def update_history(
-        self, messages: Sequence[AllMessageValues], date: str | None = None
-    ) -> None:
+    def update_history(self, messages: Sequence[AllMessageValues], date: str | None = None) -> None:
         self._workspace.update_history(messages, date)
 
     def reset_history(self) -> None:
