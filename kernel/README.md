@@ -102,13 +102,45 @@ The workspace implementation is internal to the kernel (`amnesia_agent_kernel.wo
 Controlled read/update operations are available through `KernelSession`; callers do
 not construct or receive a Workspace object from the public API.
 
-On setup, the kernel creates the workspace directory and empty `system_prompt.md` /
-`memory.md` files when they are missing. No seed content ships with the package.
+`KernelSession.__init__` always runs a lightweight setup (create the workspace
+directory and empty `system_prompt.md` / `memory.md` when missing; existing
+content is preserved). No seed content ships with the package.
+
+For frontend open flows that need an explicit check before constructing a session,
+use the three `@staticmethod`s (usable without a session instance; `root=None`
+resolves to `~/.amnesia-agent`):
+
+1. `KernelSession.check_workspace(root=None) -> bool` — `True` only when `root`
+   exists as a directory and both `system_prompt.md` and `memory.md` exist as
+   files (content may be empty). `history/` may be missing. Does **not** validate
+   history JSONL contents. Returns `False` for missing/invalid structure (offer
+   repair vs reset); does not raise for normal not-ok cases.
+2. `KernelSession.setup_or_repair_workspace(root=None) -> None` — mkdir parents;
+   create empty prompt/memory files if missing. Does **not** wipe existing content
+   and does **not** delete `history/`.
+3. `KernelSession.create_or_reset_workspace(root=None) -> None` — if `root` exists
+   and is a directory, `shutil.rmtree` it; if missing, treat as clear; if it
+   exists and is not a directory, raise `WorkspaceError`; then run setup/repair
+   to recreate empty prompt/memory files.
+
+Suggested frontend flow: **open → `check_workspace`; if ok, construct
+`KernelSession`; if not, let the user choose repair (`setup_or_repair_workspace`)
+or reset (`create_or_reset_workspace`)**, then open. Init setup remains
+idempotent after repair/reset.
 
 When both the system prompt and memory are empty, the system message is omitted
 from the provider request. Non-empty values are joined with `\n\n`.
 
 ```python
+# Strict open flow
+root = None  # or a path; None → ~/.amnesia-agent
+if not KernelSession.check_workspace(root):
+    # Frontend: offer repair vs reset
+    KernelSession.setup_or_repair_workspace(root)
+    # or: KernelSession.create_or_reset_workspace(root)
+
+session = KernelSession(provider, policy, workspace_root=root)
+
 session.read_system_prompt()
 session.update_system_prompt(text)
 
@@ -122,7 +154,11 @@ session.update_history(messages, "2026-08-28")
 session.reset_history()
 ```
 
-`reset_system_prompt`, `reset_memory`, and `reset_workspace` have been removed.
+**Breaking:** `workspace_mode` / `mode` and `reset_workspace` are removed; use
+`check_workspace`, `setup_or_repair_workspace`, and `create_or_reset_workspace`
+instead.
+
+`reset_system_prompt` and `reset_memory` remain removed.
 
 History input and persisted records are validated as role messages only (`system`,
 `user`, `assistant`, `tool`). Empty valid sequences remove a history file;
@@ -182,7 +218,10 @@ configuration paths.
   `Event`; yields `str | AllMessageValues` instead (`events.py` removed).
 - Split internals into `provider.py`, `streaming.py`, and `workspace/` package.
 - Default command timeout is **1800** seconds.
-- Removed `reset_system_prompt`, `reset_memory`, and `reset_workspace`.
+- Removed `reset_system_prompt` and `reset_memory`.
+- Removed `workspace_mode` / `mode` and `reset_workspace`; use
+  `KernelSession.check_workspace`, `setup_or_repair_workspace`, and
+  `create_or_reset_workspace` instead.
 - History is role-only; `kind` events are gone.
 - Provider/cancel failures append user-role history messages then raise.
 - `provider_params` is `Mapping[str, Any] | None` and is not scalar-validated.
