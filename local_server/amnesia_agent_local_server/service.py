@@ -1,16 +1,10 @@
 """Deep application service behind the local HTTP routes."""
 
 import json
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Mapping
 from typing import Any
 
-from amnesia_agent_kernel import (
-    AgentError,
-    AssistantMessage,
-    Delta,
-    KernelSession,
-    ToolResult,
-)
+from amnesia_agent_kernel import AgentError, KernelSession
 
 from amnesia_agent_local_server.config import ConfigStore, LoadedConfig, public_config
 from amnesia_agent_local_server.protocol import RESPONSE_FORMAT, ConfigUpdate
@@ -117,6 +111,10 @@ class AgentService:
         self._active = True
         return session
 
+    def _require_idle(self, action: str) -> None:
+        if self._active:
+            raise TurnBusyError(f"Cannot {action} during an active turn")
+
     async def stream_turn(self, user_input: str) -> AsyncGenerator[dict[str, Any], None]:
         """Yield typed event payloads and release the active-turn slot reliably."""
         session = self._reserve_turn()
@@ -131,8 +129,26 @@ class AgentService:
                 "type": "error",
                 "data": {"error_type": type(error).__name__, "message": str(error)},
             }
+        except ValueError as error:
+            yield {
+                "type": "error",
+                "data": {"error_type": "ServerError", "message": str(error)},
+            }
         finally:
             self._active = False
+
+    def check_workspace(self) -> bool:
+        return KernelSession.check_workspace()
+
+    def setup_or_repair_workspace(self) -> None:
+        self._require_idle("setup or repair workspace")
+        KernelSession.setup_or_repair_workspace()
+        self._session = None
+
+    def create_or_reset_workspace(self) -> None:
+        self._require_idle("create or reset workspace")
+        KernelSession.create_or_reset_workspace()
+        self._session = None
 
     def read_system_prompt(self) -> str:
         return self._get_session().read_system_prompt()
@@ -141,11 +157,6 @@ class AgentService:
         self._get_session().update_system_prompt(content)
         return content
 
-    def reset_system_prompt(self) -> str:
-        session = self._get_session()
-        session.reset_system_prompt()
-        return session.read_system_prompt()
-
     def read_memory(self) -> str:
         return self._get_session().read_memory()
 
@@ -153,24 +164,18 @@ class AgentService:
         self._get_session().update_memory(content)
         return content
 
-    def reset_memory(self) -> str:
-        session = self._get_session()
-        session.reset_memory()
-        return session.read_memory()
-
     def list_history(self) -> list[str]:
         return self._get_session().list_history()
 
-    def read_history(self, date: str | None = None) -> list[dict[str, Any]]:
-        return self._get_session().read_history(date)
+    def read_history(self, date: str | None = None) -> list[Any]:
+        return list(self._get_session().read_history(date))
 
     def reset_history(self) -> None:
+        self._require_idle("reset history")
         self._get_session().reset_history()
 
 
-def _message_data(message: Any) -> dict[str, Any]:
-    if not isinstance(message, dict):
-        return {"content": "", "tool_calls": []}
+def _message_data(message: Mapping[str, Any]) -> dict[str, Any]:
     content = message.get("content")
     if not isinstance(content, str):
         content = "" if content is None else str(content)
@@ -203,25 +208,26 @@ def _parse_structured_answer(content: str) -> dict[str, Any] | None:
     return {"answer": answer, "choices": choices}
 
 
-def _tool_data(message: Any) -> dict[str, Any]:
-    if not isinstance(message, dict):
-        return {"content": ""}
+def _tool_data(message: Mapping[str, Any]) -> dict[str, Any]:
     content = message.get("content")
     return {"content": content if isinstance(content, str) else str(content)}
 
 
 def event_payload(event: Any) -> dict[str, Any]:
-    """Convert a kernel event into the stable wire envelope."""
-    if isinstance(event, Delta):
-        return {"type": "delta", "data": {"text": event.text}}
-    if isinstance(event, AssistantMessage):
-        data = _message_data(event.message)
-        if data.get("tool_calls"):
-            return {"type": "tool_call", "data": data}
-        return {"type": "assistant", "data": data}
-    if isinstance(event, ToolResult):
-        return {"type": "tool_result", "data": _tool_data(event.message)}
-    return {
-        "type": "error",
-        "data": {"error_type": "ServerError", "message": "Unknown kernel event"},
-    }
+    """Convert a kernel turn event into the stable wire envelope.
+
+    Kernel ``turn`` yields ``str`` deltas and ``AllMessageValues`` role messages.
+    Unexpected shapes raise ``ValueError``.
+    """
+    if isinstance(event, str):
+        return {"type": "delta", "data": {"text": event}}
+    if isinstance(event, Mapping):
+        role = event.get("role")
+        if role == "assistant":
+            data = _message_data(event)
+            if data.get("tool_calls"):
+                return {"type": "tool_call", "data": data}
+            return {"type": "assistant", "data": data}
+        if role == "tool":
+            return {"type": "tool_result", "data": _tool_data(event)}
+    raise ValueError(f"Unexpected kernel event type: {type(event).__name__!r}")
