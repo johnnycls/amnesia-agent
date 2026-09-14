@@ -18,8 +18,9 @@ dependencies = [
 [project.scripts]
 amnesia-agent-local-server = "amnesia_agent_local_server.__main__:main"
 
-[tool.setuptools]
-packages = ["amnesia_agent_local_server"]
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["amnesia_agent_local_server*"]
 
 [tool.setuptools.package-data]
 amnesia_agent_local_server = ["data/*", "py.typed"]

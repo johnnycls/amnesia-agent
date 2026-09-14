@@ -1,135 +1,76 @@
-"""FastAPI application for the reusable local agent server."""
+"""FastAPI assembly: routers, exception handlers, loopback app factory."""
 
-import json
-from collections.abc import AsyncIterator, Callable
-from typing import Any, TypeVar, cast
+from __future__ import annotations
 
-from amnesia_agent_kernel import AgentError
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from typing import Any
+
+from amnesia_agent_kernel import AgentError, ConfigError, WorkspaceError
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 
 from amnesia_agent_local_server.config import ConfigStore
-from amnesia_agent_local_server.protocol import ConfigUpdate, ContentRequest, TurnRequest
-from amnesia_agent_local_server.service import AgentService, TurnBusyError
+from amnesia_agent_local_server.routes import config, health, shutdown, turn, workspace
+from amnesia_agent_local_server.session import SessionManager, TurnBusyError
 
 API_PREFIX = "/v1"
-T = TypeVar("T")
 
 
 def create_app(
     config_store: ConfigStore | None = None,
     instance_id: str | None = None,
 ) -> FastAPI:
-    """Create an application with a fresh server service."""
+    """Create an application with one ``SessionManager`` and ``/v1`` routers."""
     app = FastAPI(title="Amnesia Agent Local Server", version="0.0.0-alpha.0")
-    app.state.agent_service = AgentService(config_store, instance_id)
+    app.state.session = SessionManager(config_store, instance_id)
     app.state.uvicorn_server = None
 
-    @app.get(f"{API_PREFIX}/health")
-    async def health() -> dict[str, Any]:
-        return cast(dict[str, Any], app.state.agent_service.health())
+    app.include_router(health.router, prefix=API_PREFIX)
+    app.include_router(config.router, prefix=API_PREFIX)
+    app.include_router(workspace.router, prefix=API_PREFIX)
+    app.include_router(turn.router, prefix=API_PREFIX)
+    app.include_router(shutdown.router, prefix=API_PREFIX)
 
-    @app.get(f"{API_PREFIX}/config")
-    async def read_config() -> dict[str, Any]:
-        return _call(lambda: app.state.agent_service.read_config())
-
-    @app.put(f"{API_PREFIX}/config")
-    async def update_config(update: ConfigUpdate) -> dict[str, Any]:
-        return _call(lambda: app.state.agent_service.update_config(update))
-
-    @app.post(f"{API_PREFIX}/config/reset")
-    async def reset_config() -> dict[str, Any]:
-        return _call(lambda: app.state.agent_service.reset_config())
-
-    @app.post(f"{API_PREFIX}/turn")
-    async def turn(request: Request, turn_request: TurnRequest) -> StreamingResponse:
-        service: AgentService = app.state.agent_service
-        if service.active:
-            raise HTTPException(status_code=409, detail="Another turn is already active")
-
-        async def stream() -> AsyncIterator[str]:
-            events = service.stream_turn(turn_request.text)
-            try:
-                async for event in events:
-                    if await request.is_disconnected():
-                        break
-                    yield _sse(event)
-            finally:
-                await events.aclose()
-
-        return StreamingResponse(
-            stream(),
-            media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-        )
-
-    @app.get(f"{API_PREFIX}/workspace/check")
-    async def check_workspace() -> dict[str, bool]:
-        return {"ok": _call(lambda: app.state.agent_service.check_workspace())}
-
-    @app.post(f"{API_PREFIX}/workspace/setup-or-repair")
-    async def setup_or_repair_workspace() -> dict[str, bool]:
-        _call(lambda: app.state.agent_service.setup_or_repair_workspace())
-        return {"ok": True}
-
-    @app.post(f"{API_PREFIX}/workspace/create-or-reset")
-    async def create_or_reset_workspace() -> dict[str, bool]:
-        _call(lambda: app.state.agent_service.create_or_reset_workspace())
-        return {"ok": True}
-
-    @app.get(f"{API_PREFIX}/workspace/system-prompt")
-    async def read_system_prompt() -> dict[str, str]:
-        return _content_response(lambda: app.state.agent_service.read_system_prompt())
-
-    @app.put(f"{API_PREFIX}/workspace/system-prompt")
-    async def update_system_prompt(content: ContentRequest) -> dict[str, str]:
-        return _content_response(
-            lambda: app.state.agent_service.update_system_prompt(content.content)
-        )
-
-    @app.get(f"{API_PREFIX}/workspace/memory")
-    async def read_memory() -> dict[str, str]:
-        return _content_response(lambda: app.state.agent_service.read_memory())
-
-    @app.put(f"{API_PREFIX}/workspace/memory")
-    async def update_memory(content: ContentRequest) -> dict[str, str]:
-        return _content_response(lambda: app.state.agent_service.update_memory(content.content))
-
-    @app.get(f"{API_PREFIX}/workspace/history")
-    async def list_history() -> dict[str, list[str]]:
-        return {"dates": _call(lambda: app.state.agent_service.list_history())}
-
-    @app.get(f"{API_PREFIX}/workspace/history/{{date}}")
-    async def read_history(date: str) -> dict[str, Any]:
-        return {"date": date, "messages": _call(lambda: app.state.agent_service.read_history(date))}
-
-    @app.post(f"{API_PREFIX}/workspace/history/reset")
-    async def reset_history() -> dict[str, bool]:
-        _call(lambda: app.state.agent_service.reset_history())
-        return {"reset": True}
-
-    @app.post(f"{API_PREFIX}/shutdown")
-    async def shutdown() -> dict[str, bool]:
-        server = app.state.uvicorn_server
-        if server is not None:
-            server.should_exit = True
-        return {"shutting_down": True}
-
+    _install_exception_handlers(app)
     return app
 
 
-def _call(function: Callable[[], T]) -> T:
-    try:
-        return function()
-    except TurnBusyError as error:
-        raise HTTPException(status_code=409, detail=str(error)) from error
-    except (AgentError, OSError, ValueError) as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
+def _install_exception_handlers(app: FastAPI) -> None:
+    """Map expected failures to HTTP status + JSON ``detail`` bodies."""
+
+    @app.exception_handler(TurnBusyError)
+    async def turn_busy_handler(_request: Request, exc: TurnBusyError) -> JSONResponse:
+        return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+    @app.exception_handler(ConfigError)
+    async def config_error_handler(_request: Request, exc: ConfigError) -> JSONResponse:
+        return JSONResponse(status_code=400, content=_error_detail(exc))
+
+    @app.exception_handler(WorkspaceError)
+    async def workspace_error_handler(_request: Request, exc: WorkspaceError) -> JSONResponse:
+        return JSONResponse(status_code=400, content=_error_detail(exc))
+
+    @app.exception_handler(AgentError)
+    async def agent_error_handler(_request: Request, exc: AgentError) -> JSONResponse:
+        return JSONResponse(status_code=400, content=_error_detail(exc))
+
+    @app.exception_handler(ValueError)
+    async def value_error_handler(_request: Request, exc: ValueError) -> JSONResponse:
+        return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+    @app.exception_handler(OSError)
+    async def os_error_handler(_request: Request, exc: OSError) -> JSONResponse:
+        return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_handler(
+        _request: Request, exc: RequestValidationError
+    ) -> JSONResponse:
+        return JSONResponse(status_code=422, content={"detail": exc.errors()})
 
 
-def _content_response(function: Callable[[], str]) -> dict[str, str]:
-    return {"content": _call(function)}
-
-
-def _sse(payload: dict[str, Any]) -> str:
-    return f"data: {json.dumps(payload, separators=(',', ':'))}\n\n"
+def _error_detail(exc: AgentError) -> dict[str, Any]:
+    detail: dict[str, Any] = {"detail": str(exc)}
+    if exc.path is not None:
+        detail["path"] = exc.path
+    return detail

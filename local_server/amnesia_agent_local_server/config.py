@@ -1,5 +1,7 @@
 """Persistent configuration owned by the local server."""
 
+from __future__ import annotations
+
 import json
 import os
 import shutil
@@ -47,7 +49,7 @@ class LoadedConfig:
 
 
 class ConfigStore:
-    """Store and validate server configuration separately from kernel state."""
+    """Load, save, and reset ``~/.amnesia-agent-local-server/config.json``."""
 
     def __init__(self, root: str | os.PathLike[str] | None = None) -> None:
         if root is not None and (
@@ -90,7 +92,11 @@ class ConfigStore:
         return self.load()
 
     def load(self) -> LoadedConfig:
-        """Load and validate the JSON configuration."""
+        """Load and validate the JSON configuration.
+
+        A missing file is lazy-created from packaged defaults. Corrupt or invalid
+        files raise ``ConfigError`` (no auto-repair).
+        """
         if not self.path.exists():
             self.setup()
         try:
@@ -175,7 +181,7 @@ def _validate_provider(provider: ProviderConfig) -> None:
 
 
 def public_config(config: LoadedConfig) -> dict[str, Any]:
-    """Return config data safe for the settings UI; never disclose the API key."""
+    """Return config safe for clients; never disclose the API key."""
     return {
         "model": config.provider.model,
         "api_key": None,
