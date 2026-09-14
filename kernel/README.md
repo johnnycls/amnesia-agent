@@ -38,17 +38,19 @@ filtering; kernel-controlled request fields (`model`, turn kwargs, `api_key`,
 - 256 KiB combined command output
 - 1000 characters for non-user context messages
 
-These are guardrails for trusted-local execution, not a sandbox. The bash tool
+These are guardrails for trusted-local execution, not a sandbox. The shell tool
 still has host filesystem, network, and process access. Use a container or VM when
 the model or provider is not trusted.
 
-## Turns and events
+## Turns and streaming
 
-`KernelSession.turn(text, response_format=None)` returns an async iterator of:
+`KernelSession.turn(text, response_format=None)` returns an async iterator of
+`str | AllMessageValues`:
 
-- `Delta` — streamed assistant text.
-- `AssistantMessage` — a complete assistant response, including tool calls.
-- `ToolResult` — one result per executed bash call.
+- `str` — a streamed assistant text delta.
+- `AllMessageValues` — a complete assistant message (`role="assistant"`, may
+  include `tool_calls`) or a tool-result message (`role="tool"`). Distinguish by
+  `role`.
 
 `response_format` is an optional JSON object passed to LiteLLM for providers that
 support structured outputs. For example:
@@ -69,12 +71,17 @@ response_format = {
 }
 
 async for event in session.turn("Answer this", response_format=response_format):
-    ...
+    if isinstance(event, str):
+        ...  # streamed delta
+    elif event["role"] == "assistant":
+        ...  # complete assistant message; JSON text is in event["content"]
+    elif event["role"] == "tool":
+        ...  # tool result
 ```
 
 The kernel validates that the format contains only JSON-compatible values and
 makes a defensive copy before sending it to the provider. The structured result
-is still exposed as the model's JSON text in `AssistantMessage.message["content"]`;
+is still exposed as the model's JSON text in the assistant message `content`;
 the frontend can parse it with `json.loads` after receiving the complete message.
 Provider support for a particular structured-output format varies by model.
 
@@ -96,7 +103,7 @@ Controlled read/update operations are available through `KernelSession`; callers
 not construct or receive a Workspace object from the public API.
 
 On setup, the kernel creates the workspace directory and empty `system_prompt.md` /
-`memory.md` files when they are missing. There are no packaged seed prompts.
+`memory.md` files when they are missing. No seed content ships with the package.
 
 When both the system prompt and memory are empty, the system message is omitted
 from the provider request. Non-empty values are joined with `\n\n`.
@@ -122,8 +129,16 @@ History input and persisted records are validated as role messages only (`system
 malformed inputs raise `WorkspaceError` without deleting it. Kind/sidecar history
 events are no longer accepted.
 
-The bash tool schema is a kernel constant. It is not copied to the workspace and
+The shell tool schema is a kernel constant. It is not copied to the workspace and
 cannot be changed through workspace files.
+
+## Suggested system prompt
+
+Frontends may seed `system_prompt.md` with guidance such as: accomplish **all**
+tasks through the shell tool; think carefully about how to use the shell (files,
+scripts, APIs, editing memory and prompt files, and composing multi-step
+commands). This is documentation for frontends only — the kernel does not ship a
+prompt file.
 
 ## Error classes
 
@@ -134,20 +149,23 @@ The kernel uses typed `AgentError` subclasses for expected failures:
 | `ConfigError` | Invalid or missing provider/execution configuration |
 | `WorkspaceError` | Filesystem or validation errors in the workspace |
 | `ProviderError` | LiteLLM or upstream provider failures |
-| `ToolError` | Bash execution failures that cannot be returned as tool text |
+| `ToolError` | Shell execution failures that cannot be returned as tool text |
 
 Provider and workspace failures propagate to the caller; ordinary shell failures
 and bounded execution failures are returned to the model as tool-result text.
 
 ## Cross-platform notes
 
-The bash tool handles process management differently per platform:
+The shell tool handles process management differently per platform:
 
 - **Unix** — commands run in a new session (`start_new_session=True`). Timeout
   kills the process group with `SIGKILL`.
 - **Windows** — commands run in a new process group
   (`CREATE_NEW_PROCESS_GROUP`). Timeout kills the tree with
   `taskkill /T /F`.
+
+Commands use `asyncio.create_subprocess_shell`, which invokes the platform
+default shell (not necessarily bash).
 
 ## Boundary
 
@@ -158,8 +176,11 @@ configuration paths.
 
 ## Breaking changes (this refactor)
 
+- Tool schema name renamed: `bash` → `shell` (`BASH_TOOL` → `SHELL_TOOL`,
+  `run_bash` → `run_shell`).
+- Turn stream no longer uses `Delta` / `AssistantMessage` / `ToolResult` /
+  `Event`; yields `str | AllMessageValues` instead (`events.py` removed).
 - Split internals into `provider.py`, `streaming.py`, and `workspace/` package.
-- Deleted packaged `data/` seeds; missing prompt/memory files are created empty.
 - Default command timeout is **1800** seconds.
 - Removed `reset_system_prompt`, `reset_memory`, and `reset_workspace`.
 - History is role-only; `kind` events are gone.

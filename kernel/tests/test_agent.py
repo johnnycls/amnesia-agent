@@ -8,9 +8,8 @@ from unittest.mock import AsyncMock, patch
 
 from amnesia_agent_kernel.agent import agent_turn
 from amnesia_agent_kernel.errors import ConfigError, ProviderError
-from amnesia_agent_kernel.events import AssistantMessage, Delta, ToolResult
-from amnesia_agent_kernel.provider import _request_kwargs
-from amnesia_agent_kernel.streaming import _assistant_message
+from amnesia_agent_kernel.provider import request_kwargs
+from amnesia_agent_kernel.streaming import assistant_message
 from amnesia_agent_kernel.types import ExecutionPolicy, ProviderConfig
 from amnesia_agent_kernel.workspace import Workspace
 
@@ -42,19 +41,19 @@ def make_config() -> ProviderConfig:
 class AssistantMessageTests(unittest.TestCase):
     def test_assembles_content_and_ordered_tool_calls(self) -> None:
         calls = {
-            1: {"id": "c2", "function": {"name": "bash", "arguments": "{}"}},
-            0: {"id": "c1", "function": {"name": "bash", "arguments": '{"command":"ls"}'}},
+            1: {"id": "c2", "function": {"name": "shell", "arguments": "{}"}},
+            0: {"id": "c1", "function": {"name": "shell", "arguments": '{"command":"ls"}'}},
         }
-        message = _assistant_message(["Hel", "lo"], calls)
+        message = assistant_message(["Hel", "lo"], calls)
         self.assertEqual(message["content"], "Hello")
         self.assertEqual([call["id"] for call in message["tool_calls"]], ["c1", "c2"])
 
     def test_omits_tool_calls_key_when_absent(self) -> None:
-        self.assertEqual(_assistant_message(["hi"], {}), {"role": "assistant", "content": "hi"})
+        self.assertEqual(assistant_message(["hi"], {}), {"role": "assistant", "content": "hi"})
 
     def test_rejects_tool_call_without_id(self) -> None:
         with self.assertRaises(ProviderError):
-            _assistant_message([], {0: {"id": "", "function": {"name": "bash", "arguments": "{}"}}})
+            assistant_message([], {0: {"id": "", "function": {"name": "shell", "arguments": "{}"}}})
 
 
 class AgentTurnTests(unittest.IsolatedAsyncioTestCase):
@@ -64,7 +63,7 @@ class AgentTurnTests(unittest.IsolatedAsyncioTestCase):
             stream(
                 chunk(
                     tool_calls=[
-                        call_delta(0, call_id="c1", name="bash", arguments='{"command":"ls"}')
+                        call_delta(0, call_id="c1", name="shell", arguments='{"command":"ls"}')
                     ]
                 )
             ),
@@ -91,9 +90,7 @@ class AgentTurnTests(unittest.IsolatedAsyncioTestCase):
             ):
                 events = [
                     event
-                    async for event in agent_turn(
-                        make_config(), ExecutionPolicy(), workspace, "hi"
-                    )
+                    async for event in agent_turn(make_config(), ExecutionPolicy(), workspace, "hi")
                 ]
             history_files = sorted(Path(directory, "history").glob("*.jsonl"))
             self.assertEqual(len(history_files), 1)
@@ -102,13 +99,17 @@ class AgentTurnTests(unittest.IsolatedAsyncioTestCase):
                 for line in history_files[0].read_text(encoding="utf-8").splitlines()
             ]
 
-        self.assertEqual(
-            [type(event) for event in events],
-            [AssistantMessage, ToolResult, Delta, Delta, AssistantMessage],
-        )
-        self.assertEqual(events[0].message["tool_calls"][0]["id"], "c1")
-        self.assertEqual(events[1].message, tool_message)
-        self.assertEqual(events[4].message["content"], "all done")
+        self.assertEqual(len(events), 5)
+        self.assertIsInstance(events[0], dict)
+        self.assertEqual(events[0]["role"], "assistant")
+        self.assertEqual(events[0]["tool_calls"][0]["id"], "c1")
+        self.assertEqual(events[1], tool_message)
+        self.assertEqual(events[1]["role"], "tool")
+        self.assertEqual(events[2], "all ")
+        self.assertEqual(events[3], "done")
+        self.assertIsInstance(events[4], dict)
+        self.assertEqual(events[4]["role"], "assistant")
+        self.assertEqual(events[4]["content"], "all done")
         execute.assert_awaited_once()
 
         self.assertEqual(len(calls), 2)
@@ -155,8 +156,10 @@ class AgentTurnTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0]["response_format"], response_format)
-        self.assertIsInstance(events[-1], AssistantMessage)
-        self.assertEqual(events[-1].message["content"], '{"answer":"ok"}')
+        self.assertEqual(events[0], '{"answer":"ok"}')
+        self.assertIsInstance(events[-1], dict)
+        self.assertEqual(events[-1]["role"], "assistant")
+        self.assertEqual(events[-1]["content"], '{"answer":"ok"}')
 
     async def test_structured_response_format_must_be_json_compatible(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -185,7 +188,7 @@ class AgentTurnTests(unittest.IsolatedAsyncioTestCase):
             },
         )
         response_format = {"type": "json_object"}
-        kwargs = _request_kwargs(config, messages=[], tools=[], response_format=response_format)
+        kwargs = request_kwargs(config, messages=[], tools=[], response_format=response_format)
         self.assertEqual(kwargs["model"], "openai/test")
         self.assertEqual(kwargs["api_key"], "key")
         self.assertEqual(kwargs["api_base"], "https://example.com")

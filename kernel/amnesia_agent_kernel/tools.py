@@ -1,4 +1,4 @@
-"""Bounded bash execution and tool-call dispatch."""
+"""Bounded shell execution and tool-call dispatch."""
 
 import asyncio
 import json
@@ -17,14 +17,17 @@ from amnesia_agent_kernel.errors import ToolError
 
 logger = logging.getLogger(__name__)
 
-BASH_TOOL: dict[str, Any] = {
+SHELL_TOOL: dict[str, Any] = {
     "type": "function",
     "function": {
-        "name": "bash",
+        "name": "shell",
         "description": (
-            "Run a shell command and return its exit code plus combined stdout/stderr "
-            "as plain text. Commands have a session timeout and bounded output. Use it "
-            "for file operations, running scripts, API calls, and memory management."
+            "Run a shell command via the platform default shell "
+            "(asyncio.create_subprocess_shell; not necessarily bash) and return its "
+            "exit code plus combined stdout/stderr as plain text. All agent work should "
+            "go through this tool: compose commands thoughtfully for file operations, "
+            "scripts, API calls, editing memory/prompt files, and other tasks. Commands "
+            "have a session timeout and bounded output."
         ),
         "parameters": {
             "type": "object",
@@ -46,7 +49,7 @@ def _process_options() -> dict[str, Any]:
         return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
     if sys.platform.startswith(("linux", "darwin", "freebsd", "openbsd", "netbsd", "aix")):
         return {"start_new_session": True}
-    raise ToolError(f"Unsupported process-group platform: {sys.platform}", tool="bash")
+    raise ToolError(f"Unsupported process-group platform: {sys.platform}", tool="shell")
 
 
 async def _terminate_process(proc: asyncio.subprocess.Process) -> None:
@@ -72,11 +75,11 @@ async def _terminate_process(proc: asyncio.subprocess.Process) -> None:
     except ProcessLookupError:
         pass
     except (OSError, TypeError, ValueError) as e:
-        raise ToolError(f"Could not terminate bash process: {e}", tool="bash") from e
+        raise ToolError(f"Could not terminate shell process: {e}", tool="shell") from e
     try:
         await proc.wait()
     except (OSError, TypeError, ValueError) as e:
-        raise ToolError(f"Could not wait for bash process: {e}", tool="bash") from e
+        raise ToolError(f"Could not wait for shell process: {e}", tool="shell") from e
 
 
 async def _kill_process_group(proc: asyncio.subprocess.Process) -> None:
@@ -102,7 +105,7 @@ async def _kill_process_group(proc: asyncio.subprocess.Process) -> None:
     except ProcessLookupError:
         pass
     except (OSError, TypeError, ValueError) as e:
-        raise ToolError(f"Could not terminate bash process: {e}", tool="bash") from e
+        raise ToolError(f"Could not terminate shell process: {e}", tool="shell") from e
 
 
 class _OutputCollector:
@@ -151,7 +154,7 @@ async def _collect_output(
     collector: _OutputCollector,
 ) -> None:
     if proc.stdout is None or proc.stderr is None:
-        raise ToolError("Bash process did not provide output pipes", tool="bash")
+        raise ToolError("Shell process did not provide output pipes", tool="shell")
     readers = {
         asyncio.create_task(_read_output(proc.stdout, "stdout", collector)),
         asyncio.create_task(_read_output(proc.stderr, "stderr", collector)),
@@ -161,16 +164,14 @@ async def _collect_output(
     pending.add(waiter)
     try:
         while pending:
-            done, pending = await asyncio.wait(
-                pending, return_when=asyncio.FIRST_COMPLETED
-            )
+            done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
             for task in done:
                 if task is waiter:
                     task.result()
                 elif task.result():
                     # Kill and cancel the concurrent waiter/readers. A second
                     # Process.wait() can deadlock while pipe buffers are full;
-                    # run_bash reaps via communicate() afterward.
+                    # run_shell reaps via communicate() afterward.
                     await _kill_process_group(proc)
                     for pending_task in readers | {waiter}:
                         pending_task.cancel()
@@ -195,7 +196,7 @@ async def _close_pipes(proc: asyncio.subprocess.Process) -> None:
     try:
         await proc.communicate()
     except (OSError, RuntimeError, ValueError):
-        logger.debug("Could not close bash output pipes cleanly", exc_info=True)
+        logger.debug("Could not close shell output pipes cleanly", exc_info=True)
 
 
 def _format_output(
@@ -214,14 +215,14 @@ def _format_output(
     return f"exit code: {status}\noutput: {output}{suffix}"
 
 
-async def run_bash(
+async def run_shell(
     command: str,
     timeout_seconds: float = 1800.0,
     max_output_bytes: int = 256 * 1024,
 ) -> str:
     """Run a shell command with timeout and combined-output limits."""
     if not isinstance(command, str) or not command:
-        raise ToolError("bash command must be a non-empty string", tool="bash")
+        raise ToolError("shell command must be a non-empty string", tool="shell")
     if (
         isinstance(timeout_seconds, bool)
         or not isinstance(timeout_seconds, (int, float))
@@ -231,7 +232,7 @@ async def run_bash(
         or not isinstance(max_output_bytes, int)
         or max_output_bytes <= 0
     ):
-        raise ToolError("bash execution limits must be positive", tool="bash", command=command)
+        raise ToolError("shell execution limits must be positive", tool="shell", command=command)
     try:
         options = _process_options()
         proc: asyncio.subprocess.Process = await asyncio.create_subprocess_shell(
@@ -243,7 +244,7 @@ async def run_bash(
     except ToolError:
         raise
     except (OSError, TypeError, ValueError) as e:
-        raise ToolError(f"Could not start bash command: {e}", tool="bash", command=command) from e
+        raise ToolError(f"Could not start shell command: {e}", tool="shell", command=command) from e
 
     collector = _OutputCollector(max_output_bytes, timeout_seconds)
     try:
@@ -252,7 +253,7 @@ async def run_bash(
         try:
             await _terminate_process(proc)
         except ToolError:
-            logger.error("Bash process cleanup failed after timeout", exc_info=True)
+            logger.error("Shell process cleanup failed after timeout", exc_info=True)
         await _close_pipes(proc)
         return _format_output(proc, collector, timed_out=True)
     except ToolError:
@@ -261,10 +262,10 @@ async def run_bash(
         try:
             await _terminate_process(proc)
         except ToolError:
-            logger.error("Bash process cleanup failed after collection error", exc_info=True)
+            logger.error("Shell process cleanup failed after collection error", exc_info=True)
         raise ToolError(
-            f"Could not collect bash output: {type(e).__name__}: {e}",
-            tool="bash",
+            f"Could not collect shell output: {type(e).__name__}: {e}",
+            tool="shell",
             command=command,
         ) from e
     await _close_pipes(proc)
@@ -291,18 +292,18 @@ async def run_tool_call(
     timeout_seconds: float = 1800.0,
     max_output_bytes: int = 256 * 1024,
 ) -> str:
-    """Parse a tool call and run its bash command, returning result text."""
+    """Parse a tool call and run its shell command, returning result text."""
     try:
         if not isinstance(call, dict):
-            raise ToolError("tool call must be an object", tool="bash")
+            raise ToolError("tool call must be an object", tool="shell")
         function = call.get("function", {})
-        if not isinstance(function, dict) or function.get("name") != "bash":
-            raise ToolError("unknown tool; expected 'bash'", tool="bash")
+        if not isinstance(function, dict) or function.get("name") != "shell":
+            raise ToolError("unknown tool; expected 'shell'", tool="shell")
         command = _parse_command(function.get("arguments", ""))
     except (json.JSONDecodeError, KeyError, TypeError, ToolError) as e:
         return _tool_error_text(e)
     try:
-        return await run_bash(command, timeout_seconds, max_output_bytes)
+        return await run_shell(command, timeout_seconds, max_output_bytes)
     except ToolError as e:
         return _tool_error_text(e)
 
@@ -311,7 +312,7 @@ def _tool_message(call: dict[str, Any], content: str) -> AllMessageValues:
     """Build a tool-result message matching the given tool call."""
     call_id = call.get("id") if isinstance(call, dict) else None
     if not isinstance(call_id, str) or not call_id:
-        raise ToolError("tool call had no valid ID", tool="bash")
+        raise ToolError("tool call had no valid ID", tool="shell")
     return {"role": "tool", "tool_call_id": call_id, "content": content}
 
 
@@ -332,7 +333,4 @@ async def execute_tool_calls(
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         raise
-    return [
-        _tool_message(call, result)
-        for call, result in zip(tool_calls, results, strict=True)
-    ]
+    return [_tool_message(call, result) for call, result in zip(tool_calls, results, strict=True)]

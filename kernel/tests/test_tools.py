@@ -6,7 +6,7 @@ import sys
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from amnesia_agent_kernel.tools import execute_tool_calls, run_bash
+from amnesia_agent_kernel.tools import execute_tool_calls, run_shell
 
 
 def python_command(source: str) -> str:
@@ -17,19 +17,19 @@ def python_command(source: str) -> str:
 class ToolTests(unittest.IsolatedAsyncioTestCase):
     async def test_command_timeout_returns_bounded_tool_text(self) -> None:
         command = python_command("import time; print('before', flush=True); time.sleep(1)")
-        result = await run_bash(command, timeout_seconds=0.05)
+        result = await run_shell(command, timeout_seconds=0.05)
         self.assertIn("timed out", result)
         self.assertIn("before", result)
 
     async def test_output_overflow_terminates_and_marks_the_result(self) -> None:
         command = python_command("print('x' * 1000000)")
-        result = await run_bash(command, max_output_bytes=1024)
+        result = await run_shell(command, max_output_bytes=1024)
         self.assertIn("output truncated at 1024 bytes", result)
         self.assertLess(len(result), 2000)
 
     async def test_full_output_is_returned(self) -> None:
         command = python_command("print('x' * 100)")
-        result = await run_bash(command)
+        result = await run_shell(command)
         self.assertIn("x" * 100, result)
         self.assertIn("exit code: 0", result)
         self.assertNotIn("...", result)
@@ -53,12 +53,8 @@ class ToolTests(unittest.IsolatedAsyncioTestCase):
             messages = await asyncio.wait_for(execute_tool_calls(calls), timeout=1)
 
         self.assertEqual(set(observed), {"one", "two"})
-        self.assertEqual(
-            [message["tool_call_id"] for message in messages], ["one", "two"]
-        )
-        self.assertEqual(
-            [message["content"] for message in messages], ["result-one", "result-two"]
-        )
+        self.assertEqual([message["tool_call_id"] for message in messages], ["one", "two"])
+        self.assertEqual([message["content"] for message in messages], ["result-one", "result-two"])
 
 
 if __name__ == "__main__":

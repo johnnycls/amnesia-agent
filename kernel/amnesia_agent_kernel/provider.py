@@ -85,7 +85,7 @@ def _snapshot_json_value(value: Any, path: str) -> Any:
     raise ConfigError(f"{path} must contain only JSON-compatible values")
 
 
-def _snapshot_response_format(response_format: Mapping[str, Any] | None) -> dict[str, Any] | None:
+def snapshot_response_format(response_format: Mapping[str, Any] | None) -> dict[str, Any] | None:
     """Validate and copy a LiteLLM response format supplied for one turn."""
     if response_format is None:
         return None
@@ -97,7 +97,7 @@ def _snapshot_response_format(response_format: Mapping[str, Any] | None) -> dict
     )
 
 
-def _request_kwargs(config: ProviderConfig, **extra: Any) -> dict[str, Any]:
+def request_kwargs(config: ProviderConfig, **extra: Any) -> dict[str, Any]:
     """Build LiteLLM kwargs, with kernel-controlled request values winning."""
     kwargs: dict[str, Any] = dict(config.provider_params or {})
     kwargs.update(extra)
@@ -109,9 +109,7 @@ def _request_kwargs(config: ProviderConfig, **extra: Any) -> dict[str, Any]:
     return kwargs
 
 
-def _provider_error(error: Exception, config: ProviderConfig) -> ProviderError:
+def provider_error(error: Exception, config: ProviderConfig) -> ProviderError:
     if isinstance(error, ProviderError):
         return error
-    return ProviderError(
-        f"LLM request failed: {type(error).__name__}: {error}", model=config.model
-    )
+    return ProviderError(f"LLM request failed: {type(error).__name__}: {error}", model=config.model)

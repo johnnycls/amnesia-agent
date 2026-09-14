@@ -15,7 +15,6 @@ from amnesia_agent_kernel import (
     validate_provider_config,
 )
 from amnesia_agent_kernel.agent import agent_turn
-from amnesia_agent_kernel.events import Delta
 from amnesia_agent_kernel.tools import run_tool_call
 from amnesia_agent_kernel.workspace import Workspace
 
@@ -31,26 +30,35 @@ class ErrorHierarchyTests(unittest.TestCase):
 class ProviderValidationTests(unittest.TestCase):
     def test_malformed_preflight_result_is_provider_error(self) -> None:
         config = ProviderConfig("openai/test")
-        with patch(
-            "amnesia_agent_kernel.provider.litellm.validate_environment",
-            return_value=None,
-        ), self.assertRaises(ProviderError):
+        with (
+            patch(
+                "amnesia_agent_kernel.provider.litellm.validate_environment",
+                return_value=None,
+            ),
+            self.assertRaises(ProviderError),
+        ):
             validate_provider_config(config)
 
     def test_noncredential_provider_params_do_not_bypass_missing_key(self) -> None:
         config = ProviderConfig("openai/test", provider_params={"temperature": 0.5})
-        with patch(
-            "amnesia_agent_kernel.provider.litellm.validate_environment",
-            return_value={"keys_in_environment": False, "missing_keys": ["OPENAI_API_KEY"]},
-        ), self.assertRaises(ProviderError):
+        with (
+            patch(
+                "amnesia_agent_kernel.provider.litellm.validate_environment",
+                return_value={"keys_in_environment": False, "missing_keys": ["OPENAI_API_KEY"]},
+            ),
+            self.assertRaises(ProviderError),
+        ):
             validate_provider_config(config)
 
     def test_session_preflights_before_workspace_setup(self) -> None:
         config = ProviderConfig("openai/test")
-        with patch(
-            "amnesia_agent_kernel.provider.litellm.validate_environment",
-            side_effect=RuntimeError("missing credentials"),
-        ), self.assertRaises(ProviderError):
+        with (
+            patch(
+                "amnesia_agent_kernel.provider.litellm.validate_environment",
+                side_effect=RuntimeError("missing credentials"),
+            ),
+            self.assertRaises(ProviderError),
+        ):
             KernelSession(config, workspace_root=tempfile.mkdtemp())
 
 
@@ -58,10 +66,10 @@ class ToolErrorTests(unittest.IsolatedAsyncioTestCase):
     async def test_process_failure_becomes_tool_result_text(self) -> None:
         call = {
             "id": "c1",
-            "function": {"name": "bash", "arguments": '{"command":"echo hi"}'},
+            "function": {"name": "shell", "arguments": '{"command":"echo hi"}'},
         }
         with patch(
-            "amnesia_agent_kernel.tools.run_bash",
+            "amnesia_agent_kernel.tools.run_shell",
             new=AsyncMock(side_effect=ToolError("cannot start shell")),
         ):
             result = await run_tool_call(call)
@@ -120,7 +128,7 @@ class AgentTurnErrorTests(unittest.IsolatedAsyncioTestCase):
             async for event in agent_turn(
                 ProviderConfig("openai/test"), ExecutionPolicy(), workspace, "hello"
             ):
-                if isinstance(event, Delta):
+                if isinstance(event, str):
                     delta_seen.set()
 
         with tempfile.TemporaryDirectory() as directory:

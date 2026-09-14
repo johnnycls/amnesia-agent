@@ -14,15 +14,14 @@ from amnesia_agent_kernel.errors import (
     ToolError,
     WorkspaceError,
 )
-from amnesia_agent_kernel.events import AssistantMessage, Delta, Event, ToolResult
 from amnesia_agent_kernel.message import build_messages
 from amnesia_agent_kernel.provider import (
-    _provider_error,
-    _request_kwargs,
-    _snapshot_response_format,
+    provider_error,
+    request_kwargs,
+    snapshot_response_format,
 )
-from amnesia_agent_kernel.streaming import _assistant_message, _stream_delta
-from amnesia_agent_kernel.tools import BASH_TOOL, execute_tool_calls
+from amnesia_agent_kernel.streaming import assistant_message, stream_delta
+from amnesia_agent_kernel.tools import SHELL_TOOL, execute_tool_calls
 from amnesia_agent_kernel.types import ExecutionPolicy, ProviderConfig
 from amnesia_agent_kernel.workspace import Workspace
 
@@ -35,14 +34,14 @@ def _record_user_failure(workspace: Workspace, text: str) -> None:
 
 def _persist_provider_failure(
     workspace: Workspace,
-    provider_error: ProviderError,
+    error: ProviderError,
     parts: list[str] | None = None,
 ) -> None:
     if parts:
         workspace.append_history({"role": "assistant", "content": "".join(parts)})
     _record_user_failure(
         workspace,
-        f"error: {type(provider_error).__name__}: {provider_error}",
+        f"error: {type(error).__name__}: {error}",
     )
 
 
@@ -52,11 +51,15 @@ async def agent_turn(
     workspace: Workspace,
     user_input: str,
     response_format: Mapping[str, Any] | None = None,
-) -> AsyncIterator[Event]:
-    """Run one user turn until the model stops calling tools."""
+) -> AsyncIterator[str | AllMessageValues]:
+    """Run one user turn until the model stops calling tools.
+
+    Yields streamed text deltas as ``str``, then complete assistant or tool
+    messages as ``AllMessageValues`` (distinguish via ``role``).
+    """
     if not isinstance(user_input, str):
         raise ConfigError("user_input must be text")
-    response_format = _snapshot_response_format(response_format)
+    response_format = snapshot_response_format(response_format)
     workspace.append_history({"role": "user", "content": user_input})
     turn_messages: list[AllMessageValues] = []
     parts: list[str] = []
@@ -73,34 +76,32 @@ async def agent_turn(
                 workspace,
             )
             try:
-                request_kwargs: dict[str, Any] = {
+                turn_kwargs: dict[str, Any] = {
                     "messages": messages,
-                    "tools": [BASH_TOOL],
+                    "tools": [SHELL_TOOL],
                     "stream": True,
                 }
                 if response_format is not None:
-                    request_kwargs["response_format"] = response_format
-                response: Any = await acompletion(
-                    **_request_kwargs(config, **request_kwargs)
-                )
+                    turn_kwargs["response_format"] = response_format
+                response: Any = await acompletion(**request_kwargs(config, **turn_kwargs))
             except Exception as e:
-                provider_error = _provider_error(e, config)
+                error = provider_error(e, config)
                 try:
-                    _persist_provider_failure(workspace, provider_error)
+                    _persist_provider_failure(workspace, error)
                 except WorkspaceError as history_error:
-                    raise history_error from provider_error
-                raise provider_error from e
+                    raise history_error from error
+                raise error from e
 
             calls: dict[int, dict[str, Any]] = {}
             try:
                 async for chunk in response:
-                    delta = _stream_delta(chunk)
+                    delta = stream_delta(chunk)
                     content = getattr(delta, "content", None)
                     if content is not None and not isinstance(content, str):
                         raise ProviderError("LLM stream content was not text")
                     if content:
                         parts.append(content)
-                        yield Delta(content)
+                        yield content
                     raw_calls = getattr(delta, "tool_calls", None)
                     if raw_calls is not None and not isinstance(raw_calls, list):
                         raise ProviderError("LLM stream tool calls were malformed")
@@ -131,21 +132,19 @@ async def agent_turn(
                             slot["function"]["name"] = name
                         if arguments:
                             slot["function"]["arguments"] += arguments
-                message = _assistant_message(parts, calls)
+                message = assistant_message(parts, calls)
             except Exception as e:
-                provider_error = _provider_error(e, config)
+                error = provider_error(e, config)
                 try:
-                    _persist_provider_failure(workspace, provider_error, parts)
+                    _persist_provider_failure(workspace, error, parts)
                 except WorkspaceError as history_error:
-                    raise history_error from provider_error
-                raise provider_error from e
+                    raise history_error from error
+                raise error from e
 
             workspace.append_history(message)
             message_persisted = True
-            yield AssistantMessage(message)
-            tool_calls = cast(
-                Sequence[dict[str, Any]], message.get("tool_calls", [])
-            )
+            yield message
+            tool_calls = cast(Sequence[dict[str, Any]], message.get("tool_calls", []))
             if not tool_calls:
                 return
             turn_messages.append(message)
@@ -166,7 +165,7 @@ async def agent_turn(
                 raise
             for tool_message in tool_messages:
                 workspace.append_history(tool_message)
-                yield ToolResult(tool_message)
+                yield tool_message
             turn_messages.extend(tool_messages)
     except asyncio.CancelledError:
         try:

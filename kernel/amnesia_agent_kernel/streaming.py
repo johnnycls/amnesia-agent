@@ -7,7 +7,7 @@ from litellm.types.llms.openai import AllMessageValues
 from amnesia_agent_kernel.errors import ProviderError
 
 
-def _stream_delta(chunk: Any) -> Any:
+def stream_delta(chunk: Any) -> Any:
     choices = getattr(chunk, "choices", None)
     if not isinstance(choices, list) or not choices:
         raise ProviderError("LLM stream returned no choices")
@@ -17,7 +17,7 @@ def _stream_delta(chunk: Any) -> Any:
     return delta
 
 
-def _assistant_message(parts: list[str], calls: dict[int, dict[str, Any]]) -> AllMessageValues:
+def assistant_message(parts: list[str], calls: dict[int, dict[str, Any]]) -> AllMessageValues:
     """Build the assistant message from streamed content and tool-call slots."""
     message: dict[str, Any] = {"role": "assistant", "content": "".join(parts)}
     tool_calls: list[dict[str, Any]] = []
