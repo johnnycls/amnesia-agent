@@ -4,9 +4,12 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+from fastapi.testclient import TestClient
+
+from amnesia_agent_local_server.app import create_app
 from amnesia_agent_local_server.config import ConfigStore
-from amnesia_agent_local_server.protocol import ConfigUpdate
-from amnesia_agent_local_server.service import AgentService, TurnBusyError, event_payload
+from amnesia_agent_local_server.session import SessionManager, TurnBusyError
+from amnesia_agent_local_server.sse import event_envelope
 
 
 class FakeSession:
@@ -39,6 +42,9 @@ class FakeSession:
     def read_history(self, date: str | None = None) -> list[dict[str, object]]:
         return []
 
+    def update_history(self, messages: object, date: str | None = None) -> None:
+        pass
+
     def reset_history(self) -> None:
         pass
 
@@ -51,9 +57,9 @@ def _write_config(store: ConfigStore) -> None:
     )
 
 
-class ServiceTests(unittest.TestCase):
-    def test_event_payload_parses_structured_answer(self) -> None:
-        payload = event_payload(
+class SseTests(unittest.TestCase):
+    def test_event_envelope_parses_structured_answer(self) -> None:
+        payload = event_envelope(
             {"role": "assistant", "content": '{"answer":"Choose", "choices":["A", "B"]}'}
         )
         self.assertEqual(payload["type"], "assistant")
@@ -61,17 +67,17 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(payload["data"]["choices"], ["A", "B"])
         self.assertTrue(payload["data"]["structured"])
 
-    def test_event_payload_falls_back_to_plain_text(self) -> None:
-        payload = event_payload({"role": "assistant", "content": "plain text"})
+    def test_event_envelope_falls_back_to_plain_text(self) -> None:
+        payload = event_envelope({"role": "assistant", "content": "plain text"})
         self.assertFalse(payload["data"]["structured"])
         self.assertEqual(payload["data"]["choices"], [])
 
-    def test_event_payload_maps_delta_and_tool_messages(self) -> None:
+    def test_event_envelope_maps_delta_and_tool_messages(self) -> None:
         self.assertEqual(
-            event_payload("chunk"),
+            event_envelope("chunk"),
             {"type": "delta", "data": {"text": "chunk"}},
         )
-        tool_call = event_payload(
+        tool_call = event_envelope(
             {
                 "role": "assistant",
                 "content": "",
@@ -85,24 +91,26 @@ class ServiceTests(unittest.TestCase):
             }
         )
         self.assertEqual(tool_call["type"], "tool_call")
-        tool_result = event_payload({"role": "tool", "content": "ok", "tool_call_id": "1"})
+        tool_result = event_envelope({"role": "tool", "content": "ok", "tool_call_id": "1"})
         self.assertEqual(tool_result, {"type": "tool_result", "data": {"content": "ok"}})
 
-    def test_event_payload_rejects_unknown_events(self) -> None:
+    def test_event_envelope_rejects_unknown_events(self) -> None:
         with self.assertRaises(ValueError):
-            event_payload({"role": "user", "content": "nope"})
+            event_envelope({"role": "user", "content": "nope"})
         with self.assertRaises(ValueError):
-            event_payload(123)
+            event_envelope(123)  # type: ignore[arg-type]
 
+
+class SessionTests(unittest.TestCase):
     def test_stream_turn_emits_done_and_releases_slot(self) -> None:
         async def run() -> list[dict[str, object]]:
             with tempfile.TemporaryDirectory() as directory:
                 store = ConfigStore(directory)
                 _write_config(store)
-                service = AgentService(store)
-                with patch("amnesia_agent_local_server.service.KernelSession", FakeSession):
-                    events = [event async for event in service.stream_turn("hello")]
-                self.assertFalse(service.active)
+                manager = SessionManager(store)
+                with patch("amnesia_agent_local_server.session.KernelSession", FakeSession):
+                    events = [event async for event in manager.stream_turn("hello")]
+                self.assertFalse(manager.active_turn)
                 return events
 
         events = asyncio.run(run())
@@ -110,18 +118,48 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(events[1]["type"], "assistant")
         self.assertEqual(events[-1]["type"], "done")
 
-    def test_active_turn_blocks_config_update(self) -> None:
+    def test_active_turn_blocks_config_and_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = ConfigStore(directory)
             _write_config(store)
-            service = AgentService(store)
-            service._active = True
+            manager = SessionManager(store)
+            manager._active = True
             with self.assertRaises(TurnBusyError):
-                service.update_config(ConfigUpdate(model="openai/new"))
+                manager.update_config({"model": "openai/new"})
             with self.assertRaises(TurnBusyError):
-                service.setup_or_repair_workspace()
+                manager.setup_or_repair_workspace()
             with self.assertRaises(TurnBusyError):
-                service.create_or_reset_workspace()
+                manager.create_or_reset_workspace()
+
+    def test_turn_busy_returns_http_409(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = ConfigStore(directory)
+            _write_config(store)
+            client = TestClient(create_app(store), raise_server_exceptions=False)
+            client.app.state.session._active = True
+            response = client.put("/v1/config", json={"model": "openai/other"})
+            self.assertEqual(response.status_code, 409)
+            self.assertIn("detail", response.json())
+
+    def test_health_and_shutdown(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = ConfigStore(directory)
+            app = create_app(store, instance_id="abc")
+            client = TestClient(app)
+            health = client.get("/v1/health")
+            self.assertEqual(health.status_code, 200)
+            self.assertEqual(
+                health.json(),
+                {
+                    "status": "ok",
+                    "active_turn": False,
+                    "api_version": "v1",
+                    "instance_id": "abc",
+                },
+            )
+            shutdown = client.post("/v1/shutdown")
+            self.assertEqual(shutdown.status_code, 200)
+            self.assertEqual(shutdown.json(), {"shutting_down": True})
 
 
 if __name__ == "__main__":

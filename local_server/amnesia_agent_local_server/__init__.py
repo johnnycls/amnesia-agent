@@ -2,6 +2,6 @@
 
 from amnesia_agent_local_server.app import create_app
 from amnesia_agent_local_server.config import ConfigStore, LoadedConfig
-from amnesia_agent_local_server.service import AgentService
+from amnesia_agent_local_server.session import SessionManager
 
-__all__ = ["AgentService", "ConfigStore", "LoadedConfig", "create_app"]
+__all__ = ["ConfigStore", "LoadedConfig", "SessionManager", "create_app"]

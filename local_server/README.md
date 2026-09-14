@@ -1,8 +1,18 @@
 # amnesia-agent-local-server
 
-Reusable local HTTP server for `amnesia-agent-kernel` clients such as the Ren'Py and Electron frontends.
+Reusable loopback HTTP boundary for `amnesia-agent-kernel`. Desktop frontends
+(Electron, Ren'Py) talk HTTP only; this package owns persistent config and one
+session lifecycle.
 
 **Python >=3.10**
+
+## Roles
+
+| Layer | Responsibility |
+|---|---|
+| Kernel | Atomic capabilities (`KernelSession`) |
+| local_server | Loopback HTTP + `~/.amnesia-agent-local-server/config.json` + one session |
+| Frontend | HTTP client only |
 
 ## Development
 
@@ -12,55 +22,73 @@ pip install ./local_server
 amnesia-agent-local-server
 ```
 
-The server binds to `127.0.0.1:8765` by default. Override the bind address or port with:
+Binds to `127.0.0.1:8765` by default:
 
 ```text
 amnesia-agent-local-server --host 127.0.0.1 --port 8765
 ```
 
-This server intentionally exposes the kernel's unrestricted local shell tool. Keep it bound to
+This server exposes the kernel's unrestricted local shell tool. Keep it on
 loopback and run it only on a trusted machine.
+
+## Package layout
+
+```text
+amnesia_agent_local_server/
+├── config.py       # ConfigStore at ~/.amnesia-agent-local-server/config.json
+├── session.py      # SessionManager: KernelSession rebuild, turn busy lock
+├── sse.py          # str | AllMessageValues → SSE envelopes (fail-loud)
+├── routes/         # thin routers: health, config, workspace, turn, shutdown
+├── app.py          # FastAPI assembly + exception → HTTP JSON mapping
+├── __main__.py     # CLI entry (loopback bind)
+└── data/config.json
+```
 
 ## Configuration
 
-The server stores configuration at:
+Stored at `~/.amnesia-agent-local-server/config.json` (separate from the kernel
+workspace at `~/.amnesia-agent/`). Schema matches the CLI. Missing file is
+lazy-created from packaged defaults. Corrupt/invalid config fails loud with an
+HTTP error — it is **not** auto-repaired. Restore defaults only via
+`POST /v1/config/reset`.
 
-```text
-~/.amnesia-agent-local-server/config.json
-```
+Public responses mask the API key: `api_key` is always `null` and
+`api_key_set: boolean` indicates whether a key is stored.
 
-This is separate from the kernel workspace at `~/.amnesia-agent/`. The config schema is
-identical to the CLI's (see [cli/README.md](../cli/README.md) for key descriptions).
-The API key is never exposed in responses; `/v1/config` returns `api_key_set: boolean`
-instead.
+## HTTP API (`/v1`)
 
-## API
-
-All endpoints are versioned under `/v1`.
+Path/method names follow `KernelSession` (kebab-case for multi-word methods).
+There is no parallel synonym vocabulary.
 
 ### Health
 
 ```text
 GET /v1/health
-→ {"status": "ok", "active_turn": false, "api_version": "v1", "instance_id": "..."}
+→ {"status":"ok","active_turn":false,"api_version":"v1","instance_id":"..."}
 ```
+
+`instance_id` is a random UUID set at startup so frontends can detect stale
+servers on a contested port.
 
 ### Configuration
 
 ```text
-GET  /v1/config           → config object (api_key masked)
+GET  /v1/config           → public config (api_key masked)
 PUT  /v1/config           → partial update (any subset of keys)
-POST /v1/config/reset     → restore defaults
+POST /v1/config/reset     → restore packaged defaults
 ```
 
-### Turns (SSE)
+Config changes invalidate the cached `KernelSession` and return **409** while a
+turn is active.
+
+### Turn (SSE)
 
 ```text
-POST /v1/turn   {"text": "..."}
+POST /v1/turn   {"text":"..."}
 ```
 
-Returns a Server-Sent Events stream with typed envelopes. Kernel `turn` yields
-`str` deltas and role messages (`AllMessageValues`); the server maps them as:
+Server-Sent Events stream. Kernel `turn` yields `str` deltas and role messages
+(`AllMessageValues`); the server maps them as:
 
 ```text
 data: {"type":"delta","data":{"text":"..."}}
@@ -71,67 +99,96 @@ data: {"type":"done","data":{}}
 data: {"type":"error","data":{"error_type":"...","message":"..."}}
 ```
 
-- `assistant` events parse structured JSON (`answer` / `choices`) when the content
-  matches the requested schema; otherwise `structured` is false and `answer` is the
-  raw content.
-- Unexpected kernel event shapes fail loud as an `error` envelope (`ServerError`).
-- Returns **409** if a turn is already active (one turn at a time).
-- Closing the SSE connection cancels the active turn.
-- The response uses structured output (`answer_with_choices` JSON schema) when
-  the provider supports it.
+- `assistant` events parse structured JSON (`answer` / `choices`) when content
+  matches the requested schema; otherwise `structured` is false.
+- Unknown kernel event shapes fail loud as an `error` envelope (`ServerError`).
+- **409** if a turn is already active (one at a time).
+- Cancel an in-progress turn **only** by disconnecting the SSE stream — there is
+  no explicit cancel endpoint.
+- Turns request structured output (`answer_with_choices`) when the provider
+  supports it.
 
 ### Workspace
 
-Workspace HTTP mirrors the kernel `KernelSession` staticmethods and read/update
-APIs. Soft resets of system prompt / memory are gone; use setup/repair or
-create/reset instead. Paths operate on the default kernel workspace
-(`~/.amnesia-agent`).
+Mirrors `KernelSession` staticmethods and read/update APIs. Paths operate on the
+default kernel workspace (`~/.amnesia-agent`).
 
 ```text
 GET  /v1/workspace/check                → {"ok": true|false}
-POST /v1/workspace/setup-or-repair      → create missing dir / empty prompt+memory (preserves content + history)
-POST /v1/workspace/create-or-reset      → wipe workspace root, recreate empty prompt+memory
+POST /v1/workspace/setup-or-repair      → create missing dir / empty prompt+memory
+POST /v1/workspace/create-or-reset      → wipe workspace root, recreate empty files
 
-GET  /v1/workspace/system-prompt        → current system prompt
-PUT  /v1/workspace/system-prompt        → replace system prompt
+GET  /v1/workspace/system-prompt        → {"content":"..."}
+PUT  /v1/workspace/system-prompt        → {"content":"..."}
 
-GET  /v1/workspace/memory               → current memory
-PUT  /v1/workspace/memory               → replace memory
+GET  /v1/workspace/memory               → {"content":"..."}
+PUT  /v1/workspace/memory               → {"content":"..."}
 
-GET  /v1/workspace/history              → list of dates (newest first)
-GET  /v1/workspace/history/{YYYY-MM-DD} → one day's history
-POST /v1/workspace/history/reset        → clear all history
+GET  /v1/workspace/history              → {"dates":[...]}   # newest first
+GET  /v1/workspace/history/{YYYY-MM-DD} → {"date":"...","messages":[...]}
+PUT  /v1/workspace/history              → {"messages":[...],"date":...|null}
+POST /v1/workspace/history/reset        → {"reset": true}
 ```
 
-Suggested open flow (same as kernel): **check → if not ok, setup-or-repair or
-create-or-reset → then read/update / turn**. Setup/repair, create/reset, history
-reset, and config changes return **409** while a turn is active. Create/reset and
-setup/repair invalidate the server's cached `KernelSession`.
+`PUT /v1/workspace/history` mirrors `KernelSession.update_history(messages, date)`:
+optional `date` defaults to today when omitted/null.
 
-**Removed:** `POST /v1/workspace/system-prompt/reset` and
-`POST /v1/workspace/memory/reset` (kernel no longer has soft prompt/memory resets).
+Suggested open flow: **check → if not ok, setup-or-repair or create-or-reset →
+then read/update / turn**. Setup/repair, create/reset, history reset, and config
+changes return **409** while a turn is active. Create/reset and setup/repair
+invalidate the cached `KernelSession`.
 
 ### Shutdown
 
 ```text
-POST /v1/shutdown
+POST /v1/shutdown  → {"shutting_down": true}
 ```
 
-Graceful shutdown: finishes any in-progress work, then stops the server.
+Signals uvicorn to exit after in-flight work finishes. Kept for desktop
+frontends that spawn the process.
 
-## Session management
+## Error handling
 
-The server owns one `KernelSession`. Configuration changes invalidate the current
-session and apply to the next turn. The `instance_id` (random UUID, set at startup)
-is returned in `/v1/health` so frontends can detect port conflicts with stale servers.
+Expected failures are mapped to HTTP responses with status codes and JSON bodies
+of the form `{"detail": "..."}` (optional `path` for config/workspace errors).
+They do **not** escape as bare ASGI exceptions.
+
+| Condition | Status |
+|---|---|
+| Request body validation | 422 |
+| Turn already active / mutate during turn | 409 |
+| `ConfigError` / `WorkspaceError` / `AgentError` / `ValueError` / `OSError` | 400 |
+
+Turn-time kernel errors are delivered as SSE `error` envelopes, not as HTTP
+error statuses on the streaming response (the stream already started with 200).
+
+## Breaking changes (rewrite)
+
+Relative to the pre-rewrite `service.py` / monolithic `app.py` layout:
+
+1. **Internal package layout** — `service.py` and `protocol.py` are gone;
+   use `session.py`, `sse.py`, and `routes/*`. Public Python exports are
+   `create_app`, `ConfigStore`, `LoadedConfig`, `SessionManager`.
+2. **`PUT /v1/workspace/history`** — new endpoint mirroring
+   `KernelSession.update_history`.
+3. **Error boundary** — expected failures always return HTTP JSON (`detail`);
+   clients must not rely on unhandled 500s for validation / busy / config /
+   workspace errors.
+4. **Still removed (from earlier kernel alignment)** —
+   `POST /v1/workspace/system-prompt/reset` and
+   `POST /v1/workspace/memory/reset` do not exist; use setup/repair or
+   create/reset.
+
+**Frontends (Electron, Ren'Py) must follow these HTTP changes.** Soft prompt /
+memory reset URLs and any assumption that history cannot be updated over HTTP
+are obsolete.
 
 ## Troubleshooting
 
-**409 on `/v1/turn`** — A turn is already active. Only one turn runs at a time.
-Wait for the current turn to finish or close the SSE connection to cancel it.
+**409 on `/v1/turn`** — A turn is already active. Wait for it to finish or close
+the SSE connection to cancel.
 
-**Server won't start** — Ensure `amnesia-agent-local-server` is on your PATH.
-Check that port 8765 is not in use by another process.
+**409 on config / workspace lifecycle** — Finish or cancel the active turn first.
 
-**Config changes not taking effect** — Configuration changes invalidate the
-current session. The new config applies on the next turn, not immediately.
+**Corrupt config** — Fix or delete `~/.amnesia-agent-local-server/config.json`,
+or call `POST /v1/config/reset`. The server will not silently rewrite a bad file.

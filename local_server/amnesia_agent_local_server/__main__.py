@@ -1,5 +1,7 @@
 """Command-line entry point for the local server."""
 
+from __future__ import annotations
+
 import argparse
 import asyncio
 import uuid
@@ -11,7 +13,7 @@ from amnesia_agent_local_server.app import create_app
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run the amnesia agent local server.")
-    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--host", default="127.0.0.1", help="Bind host (loopback by default)")
     parser.add_argument("--port", default=8765, type=int)
     parser.add_argument("--log-level", default="info")
     parser.add_argument("--instance-id", default=None)
