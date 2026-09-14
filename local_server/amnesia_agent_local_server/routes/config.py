@@ -20,6 +20,7 @@ class ConfigUpdate(BaseModel):
     command_timeout_seconds: float | int | None = None
     max_command_output_bytes: int | None = None
     max_context_message_chars: int | None = None
+    workspace_path: str | None = None
 
 
 @router.get("")

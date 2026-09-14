@@ -3,7 +3,9 @@ import json
 import tempfile
 import unittest
 from contextlib import aclosing
+from pathlib import Path
 from types import SimpleNamespace
+from typing import ClassVar
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
@@ -15,9 +17,18 @@ from amnesia_agent_local_server.sse import event_envelope
 
 
 class FakeSession:
-    def __init__(self, provider: object, policy: object) -> None:
+    created: ClassVar[list["FakeSession"]] = []
+
+    def __init__(
+        self,
+        provider: object,
+        policy: object,
+        workspace_root: object = None,
+    ) -> None:
         self.provider = provider
         self.policy = policy
+        self.workspace_root = workspace_root
+        type(self).created.append(self)
 
     async def turn(self, text: str, response_format: object = None):
         yield '{"answer":"'
@@ -52,8 +63,13 @@ class FakeSession:
 
 
 class ClosingFakeSession(FakeSession):
-    def __init__(self, provider: object, policy: object) -> None:
-        super().__init__(provider, policy)
+    def __init__(
+        self,
+        provider: object,
+        policy: object,
+        workspace_root: object = None,
+    ) -> None:
+        super().__init__(provider, policy, workspace_root)
         self.closed = False
 
     async def turn(self, text: str, response_format: object = None):
@@ -65,12 +81,12 @@ class ClosingFakeSession(FakeSession):
             self.closed = True
 
 
-def _write_config(store: ConfigStore) -> None:
+def _write_config(store: ConfigStore, extra: dict[str, object] | None = None) -> None:
     store.path.parent.mkdir(parents=True, exist_ok=True)
-    store.path.write_text(
-        '{"model":"openai/test","api_key":"test-key"}',
-        encoding="utf-8",
-    )
+    payload: dict[str, object] = {"model": "openai/test", "api_key": "test-key"}
+    if extra:
+        payload.update(extra)
+    store.path.write_text(json.dumps(payload), encoding="utf-8")
 
 
 class SseTests(unittest.TestCase):
@@ -126,6 +142,10 @@ class SseTests(unittest.TestCase):
 
 
 class SessionTests(unittest.TestCase):
+    def setUp(self) -> None:
+        FakeSession.created = []
+        ClosingFakeSession.created = []
+
     def test_stream_turn_emits_done_and_releases_slot(self) -> None:
         async def run() -> list[dict[str, object]]:
             with tempfile.TemporaryDirectory() as directory:
@@ -154,8 +174,6 @@ class SessionTests(unittest.TestCase):
                     "amnesia_agent_local_server.session.KernelSession", ClosingFakeSession
                 ):
                     events_agen = manager.start_turn("hello")
-                    assert isinstance(manager.get_session(), ClosingFakeSession)
-                    session = manager.get_session()
 
                     async def consume() -> None:
                         async with aclosing(events_agen):
@@ -165,9 +183,41 @@ class SessionTests(unittest.TestCase):
 
                     await consume()
                     self.assertFalse(manager.active_turn)
-                    self.assertTrue(session.closed)
+                    self.assertEqual(len(ClosingFakeSession.created), 1)
+                    self.assertTrue(ClosingFakeSession.created[0].closed)
 
         asyncio.run(run())
+
+    def test_each_turn_builds_fresh_session_with_workspace_root(self) -> None:
+        async def run() -> None:
+            with tempfile.TemporaryDirectory() as directory:
+                store = ConfigStore(directory)
+                custom = str(Path(directory) / "ws")
+                _write_config(store, {"workspace_path": custom})
+                manager = SessionManager(store)
+                with patch("amnesia_agent_local_server.session.KernelSession", FakeSession):
+                    for text in ("one", "two"):
+                        events_agen = manager.start_turn(text)
+                        async with aclosing(events_agen):
+                            async for _event in events_agen:
+                                pass
+                self.assertEqual(len(FakeSession.created), 2)
+                self.assertIsNot(FakeSession.created[0], FakeSession.created[1])
+                self.assertEqual(FakeSession.created[0].workspace_root, custom)
+                self.assertEqual(FakeSession.created[1].workspace_root, custom)
+
+        asyncio.run(run())
+
+    def test_get_session_is_not_cached(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = ConfigStore(directory)
+            _write_config(store)
+            manager = SessionManager(store)
+            with patch("amnesia_agent_local_server.session.KernelSession", FakeSession):
+                first = manager.get_session()
+                second = manager.get_session()
+            self.assertIsNot(first, second)
+            self.assertEqual(len(FakeSession.created), 2)
 
     def test_active_turn_blocks_config_and_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -177,6 +227,8 @@ class SessionTests(unittest.TestCase):
             manager._active = True
             with self.assertRaises(TurnBusyError):
                 manager.update_config({"model": "openai/new"})
+            with self.assertRaises(TurnBusyError):
+                manager.update_config({"workspace_path": "/tmp/other"})
             with self.assertRaises(TurnBusyError):
                 manager.setup_or_repair_workspace()
             with self.assertRaises(TurnBusyError):

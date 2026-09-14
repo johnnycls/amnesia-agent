@@ -11,7 +11,7 @@ session lifecycle.
 | Layer | Responsibility |
 |---|---|
 | Kernel | Atomic capabilities (`KernelSession`) |
-| local_server | Loopback HTTP + `~/.amnesia-agent-local-server/config.json` + one session |
+| local_server | Loopback HTTP + `~/.amnesia-agent-local-server/config.json` + per-turn sessions |
 | Frontend | HTTP client only |
 
 ## Development
@@ -36,7 +36,7 @@ loopback and run it only on a trusted machine.
 ```text
 amnesia_agent_local_server/
 ├── config.py       # defaults constants + ConfigStore persistence
-├── session.py      # SessionManager: KernelSession rebuild, turn busy flag
+├── session.py      # SessionManager: fresh KernelSession per turn, turn busy flag
 ├── sse.py          # str | AllMessageValues → SSE envelopes (fail-loud)
 ├── routes/         # thin routers: health, config, workspace, turn, shutdown
 ├── app.py          # FastAPI assembly + exception → HTTP JSON mapping
@@ -46,16 +46,20 @@ amnesia_agent_local_server/
 ## Configuration
 
 Defaults live as importable Python constants in `amnesia_agent_local_server.config`
-(`DEFAULT_MODEL`, `DEFAULT_COMMAND_TIMEOUT_SECONDS`, … / `default_config_dict()`).
-They are persisted at `~/.amnesia-agent-local-server/config.json` (separate from
-the kernel workspace at `~/.amnesia-agent/`). Schema matches the CLI.
+(`DEFAULT_MODEL`, `DEFAULT_COMMAND_TIMEOUT_SECONDS`, `DEFAULT_WORKSPACE_PATH`, …
+/ `default_config_dict()`). They are persisted at
+`~/.amnesia-agent-local-server/config.json` (separate from the kernel workspace).
+
+Provider/policy fields align with the CLI. **local_server-only:** `workspace_path`
+(string; empty/missing → kernel default `~/.amnesia-agent`).
 
 - Missing file: lazy-created from those constants.
 - Corrupt/invalid config: fail loud with an HTTP error — **not** auto-repaired.
 - Restore defaults only via `POST /v1/config/reset` (rewrites from constants).
 
 Public responses mask the API key: `api_key` is always `null` and
-`api_key_set: boolean` indicates whether a key is stored.
+`api_key_set: boolean` indicates whether a key is stored. `workspace_path` is
+returned as configured (empty string means kernel default).
 
 ## HTTP API (`/v1`)
 
@@ -81,8 +85,9 @@ PUT  /v1/config           → partial update (any subset of keys)
 POST /v1/config/reset     → rewrite defaults from constants
 ```
 
-Config changes invalidate the cached `KernelSession` and return **409** while a
-turn is active.
+Config changes return **409** while a turn is active. There is no long-lived
+`KernelSession` cache: every turn and workspace read/update builds a fresh
+session from the latest config (including `workspace_path`).
 
 ### Turn (SSE)
 
@@ -122,7 +127,9 @@ data: {"type":"error","data":{"error_type":"...","message":"..."}}
 ### Workspace
 
 Mirrors `KernelSession` staticmethods and read/update APIs. Paths operate on the
-default kernel workspace (`~/.amnesia-agent`).
+**configured** `workspace_path` (resolved: empty → kernel default
+`~/.amnesia-agent`; otherwise the configured string, with expanduser in the
+kernel). Invalid roots fail loud as `WorkspaceError` → HTTP **400**.
 
 ```text
 GET  /v1/workspace/check                → {"ok": true|false}
@@ -146,8 +153,8 @@ optional `date` defaults to today when omitted/null.
 
 Suggested open flow: **check → if not ok, setup-or-repair or create-or-reset →
 then read/update / turn**. Setup/repair, create/reset, history reset, and config
-changes return **409** while a turn is active. Create/reset and setup/repair
-invalidate the cached `KernelSession`.
+changes return **409** while a turn is active. Changing `workspace_path` does
+not need a special session invalidate (sessions are not cached across turns).
 
 ### Shutdown
 
@@ -199,6 +206,9 @@ Relative to the pre-rewrite `service.py` / monolithic `app.py` layout:
    create/reset.
 5. **Config defaults** — no packaged `data/config.json`; defaults are Python
    constants. `/shutdown` is honest when uvicorn is not wired (503).
+6. **`workspace_path`** — local_server config field (empty = kernel default).
+   Workspace HTTP and turns use the configured path. Sessions are not cached
+   across turns (fresh `KernelSession` each time from latest config).
 
 **Frontends (Electron, Ren'Py) must follow these HTTP changes.** Soft prompt /
 memory reset URLs and any assumption that history cannot be updated over HTTP
