@@ -36,7 +36,7 @@ loopback and run it only on a trusted machine.
 ```text
 amnesia_agent_local_server/
 ├── config.py       # defaults constants + ConfigStore persistence
-├── session.py      # SessionManager: fresh KernelSession per turn, turn busy flag
+├── session.py      # SessionManager: fresh KernelSession per turn, path-keyed locks
 ├── sse.py          # str | AllMessageValues → SSE envelopes (fail-loud)
 ├── routes/         # thin routers: health, config, workspace, turn, shutdown
 ├── app.py          # FastAPI assembly + exception → HTTP JSON mapping
@@ -72,11 +72,13 @@ time; workspace/config routers own their `/workspace` and `/config` prefixes.
 
 ```text
 GET /v1/health
-→ {"status":"ok","active_turn":false,"api_version":"v1","instance_id":"..."}
+→ {"status":"ok","active_turn":false,"active_workspaces":[],"api_version":"v1","instance_id":"..."}
 ```
 
-`instance_id` is a random UUID set at startup so frontends can detect stale
-servers on a contested port.
+`active_turn` is true when **any** workspace has an in-flight turn.
+`active_workspaces` lists the resolved absolute path keys currently busy
+(empty when idle). `instance_id` is a random UUID set at startup so frontends
+can detect stale servers on a contested port.
 
 ### Configuration
 
@@ -86,9 +88,10 @@ PUT  /v1/config           → partial update (any subset of keys)
 POST /v1/config/reset     → rewrite defaults from constants
 ```
 
-Config changes return **409** while a turn is active. There is no long-lived
-`KernelSession` cache: every turn and workspace read/update builds a fresh
-session from the latest config plus the request’s optional `workspace_path`.
+Config changes return **409** while **any** workspace has an active turn.
+There is no long-lived `KernelSession` cache: every turn and workspace
+read/update builds a fresh session from the latest config plus the request’s
+optional `workspace_path`.
 
 ### Turn (SSE)
 
@@ -126,12 +129,14 @@ data: {"type":"error","data":{"error_type":"...","message":"..."}}
 - Malformed assistant/tool content (non-string content, non-list `tool_calls`)
   and unknown kernel event shapes fail loud as an `error` envelope
   (`ServerError`).
-- **409** if a turn is already active (one at a time).
+- **409** if a turn is already active **for the same resolved workspace path**
+  (omit / empty / default all share `~/.amnesia-agent`). Different paths may
+  run turns **in parallel**.
 - Cancel an in-progress turn **only** by disconnecting the SSE stream — there is
   no explicit cancel endpoint.
 - On disconnect, the server `aclose`s the turn generator chain through
   `KernelSession.turn` → `agent_turn` → LiteLLM `CustomStreamWrapper.aclose()`
-  when present, releases the busy flag, and releases the kernel turn lock.
+  when present, releases that path’s busy slot, and releases the kernel turn lock.
   That is **best-effort**: local streaming stops and the HTTP connection to the
   provider is asked to close, but providers may still finish generating or bill
   tokens. There is no hard guarantee of immediate upstream abort.
@@ -192,11 +197,12 @@ POST /v1/workspace/history/reset     {"workspace_path"?}   → {"reset": true}
 optional `date` defaults to today when omitted/null.
 
 Suggested open flow: **check → if not ok, setup-or-repair or create-or-reset →
-then read/update / turn**. While a turn is active, **all workspace writes**
-return **409** via the **global** idle flag (`require_idle`): 
+then read/update / turn**. While a turn is active on a resolved path, **workspace
+writes for that path** return **409** (`require_idle_for_path`):
 `update_system_prompt`, `update_memory`, `update_history`, history reset,
-setup/repair, create/reset, and config changes. Reads stay allowed. Turn
-concurrency is still a single global busy flag (not path-keyed). Sessions are
+setup/repair, and create/reset. Writes on a **different** path are allowed.
+Reads stay allowed on busy paths. **Config** update/reset returns **409** if
+**any** workspace has an active turn (`require_no_active_turns`). Sessions are
 not cached across turns.
 
 ### Shutdown
@@ -210,10 +216,10 @@ Available only when the process was started via the official
 `app.state.uvicorn_server`). Otherwise the endpoint returns **503** with a JSON
 `detail` — it does **not** pretend to shut down.
 
-On success it best-effort cancels any in-flight turn (same `aclose` chain as SSE
-disconnect) and sets uvicorn `should_exit` so the process can exit instead of
-waiting forever on an open LLM stream. Kept for desktop frontends that spawn the
-process.
+On success it best-effort cancels **all** in-flight turns (same `aclose` chain as
+SSE disconnect, every active workspace) and sets uvicorn `should_exit` so the
+process can exit instead of waiting forever on an open LLM stream. Kept for
+desktop frontends that spawn the process.
 
 ## Error handling
 
@@ -224,7 +230,7 @@ They do **not** escape as bare ASGI exceptions.
 | Condition | Status |
 |---|---|
 | Request body validation | 422 |
-| Turn already active / mutate during turn | 409 |
+| Turn already active for path / mutate busy path / config while any busy | 409 |
 | Shutdown without official entrypoint | 503 |
 | `ConfigError` / `WorkspaceError` / `AgentError` / `ValueError` / `OSError` | 400 |
 
@@ -274,13 +280,21 @@ are obsolete. Clients that previously assumed every turn used
    **409** (same as config and lifecycle writes).
 10. **Default `command_timeout_seconds`** — **1800** (aligned with kernel `ExecutionPolicy`).
 
+11. **Path-keyed concurrent turns** — busy lock is per resolved workspace path;
+    parallel turns on different paths are allowed. Health adds
+    `active_workspaces`. Config still blocks while any turn is active.
+
 
 ## Troubleshooting
 
-**409 on `/v1/turn`** — A turn is already active. Wait for it to finish or close
-the SSE connection to cancel.
+**409 on `/v1/turn`** — A turn is already active for that resolved workspace
+path. Wait for it to finish, use a different `workspace_path`, or close the SSE
+connection to cancel.
 
-**409 on config / workspace lifecycle** — Finish or cancel the active turn first.
+**409 on workspace writes** — That path has an active turn. Finish or cancel it
+(or write a different path).
+
+**409 on config** — Finish or cancel **all** active turns first.
 
 **Corrupt config** — Fix or delete `~/.amnesia-agent-local-server/config.json`,
 or call `POST /v1/config/reset`. The server will not silently rewrite a bad file.

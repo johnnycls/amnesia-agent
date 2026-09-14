@@ -28,9 +28,7 @@ class ConfigStoreTests(unittest.TestCase):
             self.assertEqual(values["model"], DEFAULT_MODEL)
             self.assertEqual(values["command_timeout_seconds"], DEFAULT_COMMAND_TIMEOUT_SECONDS)
             self.assertEqual(values["max_command_output_bytes"], DEFAULT_MAX_COMMAND_OUTPUT_BYTES)
-            self.assertEqual(
-                values["max_context_message_chars"], DEFAULT_MAX_CONTEXT_MESSAGE_CHARS
-            )
+            self.assertEqual(values["max_context_message_chars"], DEFAULT_MAX_CONTEXT_MESSAGE_CHARS)
             self.assertNotIn("workspace_path", values)
             values.update({"model": "openai/test", "api_key": "secret"})
             store.path.write_text(json.dumps(values), encoding="utf-8")
@@ -179,9 +177,7 @@ class WorkspaceApiTests(unittest.TestCase):
                 "amnesia_agent_local_server.session.KernelSession.check_workspace",
                 return_value=True,
             ) as check:
-                response = client.get(
-                    "/v1/workspace/check", params={"workspace_path": custom}
-                )
+                response = client.get("/v1/workspace/check", params={"workspace_path": custom})
             self.assertEqual(response.status_code, 200)
             check.assert_called_once_with(custom)
 
@@ -211,9 +207,7 @@ class WorkspaceApiTests(unittest.TestCase):
                 "amnesia_agent_local_server.session.KernelSession.check_workspace",
                 return_value=True,
             ) as check:
-                response = client.get(
-                    "/v1/workspace/check", params={"workspace_path": ""}
-                )
+                response = client.get("/v1/workspace/check", params={"workspace_path": ""})
             self.assertEqual(response.status_code, 200)
             check.assert_called_once_with(None)
 
@@ -255,9 +249,7 @@ class WorkspaceApiTests(unittest.TestCase):
                 def read_memory(self) -> str:
                     return ""
 
-            with patch(
-                "amnesia_agent_local_server.session.KernelSession", FakeSession
-            ):
+            with patch("amnesia_agent_local_server.session.KernelSession", FakeSession):
                 response = client.put(
                     "/v1/workspace/history",
                     json={
@@ -278,9 +270,7 @@ class WorkspaceApiTests(unittest.TestCase):
                     super().__init__(*args, **kwargs)
                     created.append(self)
 
-            with patch(
-                "amnesia_agent_local_server.session.KernelSession", TrackingSession
-            ):
+            with patch("amnesia_agent_local_server.session.KernelSession", TrackingSession):
                 client.put(
                     "/v1/workspace/history",
                     json={
@@ -319,9 +309,7 @@ class WorkspaceApiTests(unittest.TestCase):
                 def update_memory(self, content: str) -> None:
                     self.content = content
 
-            with patch(
-                "amnesia_agent_local_server.session.KernelSession", FakeSession
-            ):
+            with patch("amnesia_agent_local_server.session.KernelSession", FakeSession):
                 prompt = client.put(
                     "/v1/workspace/system-prompt",
                     json={"content": "sys", "workspace_path": custom},

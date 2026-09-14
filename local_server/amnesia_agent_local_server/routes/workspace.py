@@ -70,9 +70,7 @@ def read_system_prompt(
 @router.put("/system-prompt")
 def update_system_prompt(body: ContentRequest, request: Request) -> dict[str, str]:
     return {
-        "content": request.app.state.session.update_system_prompt(
-            body.content, body.workspace_path
-        )
+        "content": request.app.state.session.update_system_prompt(body.content, body.workspace_path)
     }
 
 
@@ -86,11 +84,7 @@ def read_memory(
 
 @router.put("/memory")
 def update_memory(body: ContentRequest, request: Request) -> dict[str, str]:
-    return {
-        "content": request.app.state.session.update_memory(
-            body.content, body.workspace_path
-        )
-    }
+    return {"content": request.app.state.session.update_memory(body.content, body.workspace_path)}
 
 
 @router.get("/history")
@@ -115,9 +109,7 @@ def read_history(
 
 @router.put("/history")
 def update_history(body: HistoryUpdate, request: Request) -> dict[str, Any]:
-    request.app.state.session.update_history(
-        body.messages, body.date, body.workspace_path
-    )
+    request.app.state.session.update_history(body.messages, body.date, body.workspace_path)
     return {"messages": body.messages, "date": body.date}
 
 
