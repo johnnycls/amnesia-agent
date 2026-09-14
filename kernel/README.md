@@ -91,10 +91,15 @@ tool-result text so the model can recover.
 The process group is terminated on timeout or output overflow.
 
 History stores role messages only. Provider failures append a user message such as
-`error: ProviderError: ...` and then raise. Cancellation re-raises
-`asyncio.CancelledError` after persisting partial assistant text (when present)
-and a user message `user interrupted` when possible. Prior daily history is not
-auto-replayed into the model context; only the current turn's messages are.
+`error: ProviderError: ...` and then raise. Cancelling the turn task
+(`asyncio.CancelledError`) or closing the turn async generator (`aclose` /
+`contextlib.aclosing`) persists partial assistant text when present and a user
+message `user interrupted` when possible, then re-raises. Closing also best-effort
+closes the active LiteLLM provider stream (`CustomStreamWrapper.aclose()`); that
+stops further local consumption and asks the HTTP client to release the connection,
+but upstream providers may still bill or finish generating tokens. Prior daily
+history is not auto-replayed into the model context; only the current turn's
+messages are.
 
 ## Workspace operations
 

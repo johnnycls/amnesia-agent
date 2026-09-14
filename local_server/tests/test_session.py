@@ -2,6 +2,8 @@ import asyncio
 import json
 import tempfile
 import unittest
+from contextlib import aclosing
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
@@ -47,6 +49,20 @@ class FakeSession:
 
     def reset_history(self) -> None:
         pass
+
+
+class ClosingFakeSession(FakeSession):
+    def __init__(self, provider: object, policy: object) -> None:
+        super().__init__(provider, policy)
+        self.closed = False
+
+    async def turn(self, text: str, response_format: object = None):
+        try:
+            yield "partial"
+            await asyncio.sleep(60)
+            yield "unreachable"
+        finally:
+            self.closed = True
 
 
 def _write_config(store: ConfigStore) -> None:
@@ -100,6 +116,14 @@ class SseTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             event_envelope(123)  # type: ignore[arg-type]
 
+    def test_event_envelope_rejects_malformed_content(self) -> None:
+        with self.assertRaises(ValueError):
+            event_envelope({"role": "assistant", "content": {"nested": True}})
+        with self.assertRaises(ValueError):
+            event_envelope({"role": "assistant", "content": "", "tool_calls": "bad"})
+        with self.assertRaises(ValueError):
+            event_envelope({"role": "tool", "content": None})
+
 
 class SessionTests(unittest.TestCase):
     def test_stream_turn_emits_done_and_releases_slot(self) -> None:
@@ -109,7 +133,9 @@ class SessionTests(unittest.TestCase):
                 _write_config(store)
                 manager = SessionManager(store)
                 with patch("amnesia_agent_local_server.session.KernelSession", FakeSession):
-                    events = [event async for event in manager.stream_turn("hello")]
+                    events_agen = manager.start_turn("hello")
+                    async with aclosing(events_agen):
+                        events = [event async for event in events_agen]
                 self.assertFalse(manager.active_turn)
                 return events
 
@@ -117,6 +143,31 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(events[0]["type"], "delta")
         self.assertEqual(events[1]["type"], "assistant")
         self.assertEqual(events[-1]["type"], "done")
+
+    def test_cancel_active_turn_acloses_and_releases_busy(self) -> None:
+        async def run() -> None:
+            with tempfile.TemporaryDirectory() as directory:
+                store = ConfigStore(directory)
+                _write_config(store)
+                manager = SessionManager(store)
+                with patch(
+                    "amnesia_agent_local_server.session.KernelSession", ClosingFakeSession
+                ):
+                    events_agen = manager.start_turn("hello")
+                    assert isinstance(manager.get_session(), ClosingFakeSession)
+                    session = manager.get_session()
+
+                    async def consume() -> None:
+                        async with aclosing(events_agen):
+                            async for _event in events_agen:
+                                await manager.cancel_active_turn()
+                                break
+
+                    await consume()
+                    self.assertFalse(manager.active_turn)
+                    self.assertTrue(session.closed)
+
+        asyncio.run(run())
 
     def test_active_turn_blocks_config_and_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -141,7 +192,7 @@ class SessionTests(unittest.TestCase):
             self.assertEqual(response.status_code, 409)
             self.assertIn("detail", response.json())
 
-    def test_health_and_shutdown(self) -> None:
+    def test_health_and_shutdown_honesty(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = ConfigStore(directory)
             app = create_app(store, instance_id="abc")
@@ -157,9 +208,15 @@ class SessionTests(unittest.TestCase):
                     "instance_id": "abc",
                 },
             )
+            missing = client.post("/v1/shutdown")
+            self.assertEqual(missing.status_code, 503)
+            self.assertIn("detail", missing.json())
+
+            app.state.uvicorn_server = SimpleNamespace(should_exit=False)
             shutdown = client.post("/v1/shutdown")
             self.assertEqual(shutdown.status_code, 200)
             self.assertEqual(shutdown.json(), {"shutting_down": True})
+            self.assertTrue(app.state.uvicorn_server.should_exit)
 
 
 if __name__ == "__main__":

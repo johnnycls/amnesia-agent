@@ -23,7 +23,7 @@ where = ["."]
 include = ["amnesia_agent_local_server*"]
 
 [tool.setuptools.package-data]
-amnesia_agent_local_server = ["data/*", "py.typed"]
+amnesia_agent_local_server = ["py.typed"]
 
 [tool.ruff]
 target-version = "py310"

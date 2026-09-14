@@ -2,7 +2,8 @@
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator, Mapping, Sequence
+from collections.abc import AsyncGenerator, Mapping, Sequence
+from contextlib import aclosing
 from typing import Any, cast
 
 from litellm import acompletion
@@ -45,17 +46,30 @@ def _persist_provider_failure(
     )
 
 
+def _persist_interrupt(
+    workspace: Workspace,
+    parts: list[str],
+    message_persisted: bool,
+) -> None:
+    if parts and not message_persisted:
+        workspace.append_history({"role": "assistant", "content": "".join(parts)})
+    _record_user_failure(workspace, "user interrupted")
+
+
 async def agent_turn(
     config: ProviderConfig,
     policy: ExecutionPolicy,
     workspace: Workspace,
     user_input: str,
     response_format: Mapping[str, Any] | None = None,
-) -> AsyncIterator[str | AllMessageValues]:
+) -> AsyncGenerator[str | AllMessageValues, None]:
     """Run one user turn until the model stops calling tools.
 
     Yields streamed text deltas as ``str``, then complete assistant or tool
     messages as ``AllMessageValues`` (distinguish via ``role``).
+
+    Closing this async generator (``aclose`` / ``aclosing``) closes the active
+    LiteLLM stream when possible and persists a best-effort interrupt marker.
     """
     if not isinstance(user_input, str):
         raise ConfigError("user_input must be text")
@@ -94,45 +108,46 @@ async def agent_turn(
 
             calls: dict[int, dict[str, Any]] = {}
             try:
-                async for chunk in response:
-                    delta = stream_delta(chunk)
-                    content = getattr(delta, "content", None)
-                    if content is not None and not isinstance(content, str):
-                        raise ProviderError("LLM stream content was not text")
-                    if content:
-                        parts.append(content)
-                        yield content
-                    raw_calls = getattr(delta, "tool_calls", None)
-                    if raw_calls is not None and not isinstance(raw_calls, list):
-                        raise ProviderError("LLM stream tool calls were malformed")
-                    for call in raw_calls or []:
-                        index = getattr(call, "index", None)
-                        if index is None:
-                            index = 0
-                        if not isinstance(index, int) or index < 0:
-                            raise ProviderError("LLM stream tool call index was invalid")
-                        slot = calls.setdefault(
-                            index, {"id": "", "function": {"name": "", "arguments": ""}}
-                        )
-                        call_id = getattr(call, "id", None)
-                        if call_id is not None and not isinstance(call_id, str):
-                            raise ProviderError("LLM stream tool call ID was invalid")
-                        if call_id:
-                            slot["id"] = call_id
-                        function = getattr(call, "function", None)
-                        if function is None:
-                            continue
-                        name = getattr(function, "name", None)
-                        arguments = getattr(function, "arguments", None)
-                        if name is not None and not isinstance(name, str):
-                            raise ProviderError("LLM stream tool name was invalid")
-                        if arguments is not None and not isinstance(arguments, str):
-                            raise ProviderError("LLM stream tool arguments were invalid")
-                        if name:
-                            slot["function"]["name"] = name
-                        if arguments:
-                            slot["function"]["arguments"] += arguments
-                message = assistant_message(parts, calls)
+                async with aclosing(response):
+                    async for chunk in response:
+                        delta = stream_delta(chunk)
+                        content = getattr(delta, "content", None)
+                        if content is not None and not isinstance(content, str):
+                            raise ProviderError("LLM stream content was not text")
+                        if content:
+                            parts.append(content)
+                            yield content
+                        raw_calls = getattr(delta, "tool_calls", None)
+                        if raw_calls is not None and not isinstance(raw_calls, list):
+                            raise ProviderError("LLM stream tool calls were malformed")
+                        for call in raw_calls or []:
+                            index = getattr(call, "index", None)
+                            if index is None:
+                                index = 0
+                            if not isinstance(index, int) or index < 0:
+                                raise ProviderError("LLM stream tool call index was invalid")
+                            slot = calls.setdefault(
+                                index, {"id": "", "function": {"name": "", "arguments": ""}}
+                            )
+                            call_id = getattr(call, "id", None)
+                            if call_id is not None and not isinstance(call_id, str):
+                                raise ProviderError("LLM stream tool call ID was invalid")
+                            if call_id:
+                                slot["id"] = call_id
+                            function = getattr(call, "function", None)
+                            if function is None:
+                                continue
+                            name = getattr(function, "name", None)
+                            arguments = getattr(function, "arguments", None)
+                            if name is not None and not isinstance(name, str):
+                                raise ProviderError("LLM stream tool name was invalid")
+                            if arguments is not None and not isinstance(arguments, str):
+                                raise ProviderError("LLM stream tool arguments were invalid")
+                            if name:
+                                slot["function"]["name"] = name
+                            if arguments:
+                                slot["function"]["arguments"] += arguments
+                    message = assistant_message(parts, calls)
             except Exception as e:
                 error = provider_error(e, config)
                 try:
@@ -167,11 +182,9 @@ async def agent_turn(
                 workspace.append_history(tool_message)
                 yield tool_message
             turn_messages.extend(tool_messages)
-    except asyncio.CancelledError:
+    except (asyncio.CancelledError, GeneratorExit):
         try:
-            if parts and not message_persisted:
-                workspace.append_history({"role": "assistant", "content": "".join(parts)})
-            _record_user_failure(workspace, "user interrupted")
+            _persist_interrupt(workspace, parts, message_persisted)
         except WorkspaceError:
             logger.error("Could not persist turn cancellation", exc_info=True)
         raise

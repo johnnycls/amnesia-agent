@@ -1,8 +1,9 @@
-"""One KernelSession lifecycle: rebuild from config, turn busy lock, invalidate."""
+"""One KernelSession lifecycle: rebuild from config, turn busy flag, invalidate."""
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator, Mapping, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Mapping, Sequence
+from contextlib import aclosing
 from typing import Any
 
 from amnesia_agent_kernel import AgentError, ExecutionPolicy, KernelSession, ProviderConfig
@@ -35,7 +36,7 @@ class TurnBusyError(Exception):
 
 
 class SessionManager:
-    """Own config-backed ``KernelSession`` rebuild and the turn busy lock."""
+    """Own config-backed ``KernelSession`` rebuild and the turn busy flag."""
 
     def __init__(
         self,
@@ -47,6 +48,7 @@ class SessionManager:
         self.config_store.setup()
         self._session: KernelSession | None = None
         self._active = False
+        self._turn_events: AsyncIterator[Any] | None = None
 
     @property
     def active_turn(self) -> bool:
@@ -135,70 +137,93 @@ class SessionManager:
         self.require_idle("reset history")
         self.get_session().reset_history()
 
-    async def stream_turn(self, user_input: str) -> AsyncGenerator[dict[str, Any], None]:
-        """Yield SSE envelopes for one turn; release the busy slot in ``finally``."""
+    def start_turn(self, user_input: str) -> AsyncGenerator[dict[str, Any], None]:
+        """Acquire the busy flag and return the SSE envelope stream.
+
+        Raises ``TurnBusyError`` synchronously so callers can map it to HTTP 409
+        before starting a streaming response. The caller must ``aclose`` the
+        returned generator (e.g. via ``contextlib.aclosing``) so the busy flag
+        is released on disconnect or cancel.
+        """
         if self._active:
             raise TurnBusyError("Another turn is already active")
-        session = self.get_session()
         self._active = True
+        return self._stream_turn(user_input)
+
+    async def _stream_turn(self, user_input: str) -> AsyncGenerator[dict[str, Any], None]:
+        """Yield SSE envelopes for one turn; release busy in ``finally``."""
         try:
-            async for event in session.turn(user_input, response_format=RESPONSE_FORMAT):
-                yield event_envelope(event)
-            yield {"type": "done", "data": {}}
-        except AgentError as error:
-            yield {
-                "type": "error",
-                "data": {"error_type": type(error).__name__, "message": str(error)},
-            }
-        except ValueError as error:
-            yield {
-                "type": "error",
-                "data": {"error_type": "ServerError", "message": str(error)},
-            }
+            session = self.get_session()
+            turn_events = session.turn(user_input, response_format=RESPONSE_FORMAT)
+            self._turn_events = turn_events
+            try:
+                async with aclosing(turn_events):
+                    async for event in turn_events:
+                        yield event_envelope(event)
+                    yield {"type": "done", "data": {}}
+            except AgentError as error:
+                yield {
+                    "type": "error",
+                    "data": {"error_type": type(error).__name__, "message": str(error)},
+                }
+            except ValueError as error:
+                yield {
+                    "type": "error",
+                    "data": {"error_type": "ServerError", "message": str(error)},
+                }
         finally:
+            self._turn_events = None
             self._active = False
+
+    async def cancel_active_turn(self) -> None:
+        """Best-effort aclose of the in-flight kernel turn iterator, if any."""
+        turn_events = self._turn_events
+        if turn_events is not None:
+            aclose = getattr(turn_events, "aclose", None)
+            if callable(aclose):
+                await aclose()
 
 
 def _merge_config(current: LoadedConfig, fields: Mapping[str, Any]) -> LoadedConfig:
     model = fields["model"] if "model" in fields else current.provider.model
     if model is None:
         model = current.provider.model
+
     api_key = current.provider.api_key
     if "api_key" in fields and fields["api_key"] not in (None, ""):
         api_key = fields["api_key"]
-    base_url = current.provider.base_url
+
     if "base_url" in fields:
-        value = fields["base_url"]
-        base_url = value or None
-    provider_params = (
-        fields["provider_params"]
-        if "provider_params" in fields and fields["provider_params"] is not None
-        else current.provider.provider_params
-    )
-    provider = ProviderConfig(
-        model=str(model),
-        api_key=api_key,
-        base_url=base_url,
-        provider_params=provider_params,
-    )
-    policy = ExecutionPolicy(
-        command_timeout_seconds=(
-            fields["command_timeout_seconds"]
-            if "command_timeout_seconds" in fields
-            and fields["command_timeout_seconds"] is not None
-            else current.policy.command_timeout_seconds
+        base_url = fields["base_url"] or None
+    else:
+        base_url = current.provider.base_url
+
+    if "provider_params" in fields and fields["provider_params"] is not None:
+        provider_params = fields["provider_params"]
+    else:
+        provider_params = current.provider.provider_params
+
+    def pick(name: str, current_value: Any) -> Any:
+        if name in fields and fields[name] is not None:
+            return fields[name]
+        return current_value
+
+    return LoadedConfig(
+        provider=ProviderConfig(
+            model=str(model),
+            api_key=api_key,
+            base_url=base_url,
+            provider_params=provider_params,
         ),
-        max_command_output_bytes=(
-            fields["max_command_output_bytes"]
-            if "max_command_output_bytes" in fields
-            and fields["max_command_output_bytes"] is not None
-            else current.policy.max_command_output_bytes
-        ),
-        max_context_message_chars=(
-            fields["max_context_message_chars"]
-            if "max_context_message_chars" in fields
-            and fields["max_context_message_chars"] is not None
-            else current.policy.max_context_message_chars
+        policy=ExecutionPolicy(
+            command_timeout_seconds=pick(
+                "command_timeout_seconds", current.policy.command_timeout_seconds
+            ),
+            max_command_output_bytes=pick(
+                "max_command_output_bytes", current.policy.max_command_output_bytes
+            ),
+            max_context_message_chars=pick(
+                "max_context_message_chars", current.policy.max_context_message_chars
+            ),
         ),
     )
-    return LoadedConfig(provider=provider, policy=policy)

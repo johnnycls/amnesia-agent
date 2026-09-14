@@ -6,15 +6,29 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from amnesia_agent_local_server.app import create_app
-from amnesia_agent_local_server.config import ConfigStore, public_config
+from amnesia_agent_local_server.config import (
+    DEFAULT_COMMAND_TIMEOUT_SECONDS,
+    DEFAULT_MAX_COMMAND_OUTPUT_BYTES,
+    DEFAULT_MAX_CONTEXT_MESSAGE_CHARS,
+    DEFAULT_MODEL,
+    ConfigStore,
+    default_config_dict,
+    public_config,
+)
 
 
 class ConfigStoreTests(unittest.TestCase):
-    def test_store_seeds_and_masks_api_key(self) -> None:
+    def test_store_seeds_from_constants_and_masks_api_key(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = ConfigStore(directory)
             store.setup()
             values = json.loads(store.path.read_text(encoding="utf-8"))
+            self.assertEqual(values["model"], DEFAULT_MODEL)
+            self.assertEqual(values["command_timeout_seconds"], DEFAULT_COMMAND_TIMEOUT_SECONDS)
+            self.assertEqual(values["max_command_output_bytes"], DEFAULT_MAX_COMMAND_OUTPUT_BYTES)
+            self.assertEqual(
+                values["max_context_message_chars"], DEFAULT_MAX_CONTEXT_MESSAGE_CHARS
+            )
             values.update({"model": "openai/test", "api_key": "secret"})
             store.path.write_text(json.dumps(values), encoding="utf-8")
 
@@ -23,6 +37,13 @@ class ConfigStoreTests(unittest.TestCase):
             public = public_config(loaded)
             self.assertTrue(public["api_key_set"])
             self.assertIsNone(public["api_key"])
+
+    def test_default_config_dict_matches_constants(self) -> None:
+        defaults = default_config_dict()
+        self.assertEqual(defaults["model"], DEFAULT_MODEL)
+        self.assertEqual(defaults["command_timeout_seconds"], DEFAULT_COMMAND_TIMEOUT_SECONDS)
+        defaults["model"] = "mutated"
+        self.assertEqual(default_config_dict()["model"], DEFAULT_MODEL)
 
     def test_corrupt_config_fails_loud(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -40,6 +61,19 @@ class ConfigStoreTests(unittest.TestCase):
             response = client.get("/v1/config")
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.json()["model"], "")
+
+    def test_reset_rewrites_constants(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = ConfigStore(directory)
+            store.setup()
+            store.path.write_text(
+                json.dumps({"model": "openai/custom", "api_key": "secret"}),
+                encoding="utf-8",
+            )
+            reset = store.reset()
+            self.assertEqual(reset.provider.model, DEFAULT_MODEL)
+            on_disk = json.loads(store.path.read_text(encoding="utf-8"))
+            self.assertEqual(on_disk, default_config_dict())
 
     def test_save_is_readable_and_preserves_provider_params(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
