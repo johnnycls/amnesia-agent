@@ -1,7 +1,7 @@
 # amnesia-agent-local-server
 
-Reusable loopback HTTP boundary for `amnesia-agent-kernel`. Desktop frontends
-(Electron, Ren'Py) talk HTTP only; this package owns persistent config and one
+Reusable loopback HTTP boundary for `amnesia-agent-kernel`. The Ren'Py
+frontend talks HTTP only; this package owns persistent config and one
 session lifecycle.
 
 **Python >=3.10**
@@ -51,8 +51,9 @@ Defaults live as importable Python constants in `amnesia_agent_local_server.conf
 They are persisted at `~/.amnesia-agent-local-server/config.json` (separate from
 the kernel workspace).
 
-Provider/policy fields align with the CLI. **Workspace root is not a config
-field** — pass optional `workspace_path` on each request (see Workspace / Turn).
+Provider/policy fields (`model`, `api_key`, timeouts, …) are owned here.
+**Workspace root is not a config field** — pass optional `workspace_path` on
+each request (see Workspace / Turn).
 
 - Missing file: lazy-created from those constants.
 - Corrupt/invalid config: fail loud with an HTTP error — **not** auto-repaired.
@@ -146,7 +147,7 @@ data: {"type":"error","data":{"error_type":"...","message":"..."}}
   provider is asked to close, but providers may still finish generating or bill
   tokens. There is no hard guarantee of immediate upstream abort.
 - The server does **not** auto-apply a structured-output schema. Clients that
-  want choice chips (Electron / Ren'Py) must send `response_format` themselves.
+  want choice chips (Ren'Py) must send `response_format` themselves.
   Example schema to copy:
 
 ```json
@@ -272,7 +273,7 @@ Relative to the pre-rewrite `service.py` / monolithic `app.py` layout:
    that relied on server-side structured output must send `response_format`
    themselves (see Turn section example).
 
-**Frontends (Electron, Ren'Py) must follow these HTTP changes.** Soft prompt /
+**The Ren'Py frontend must follow these HTTP changes.** Soft prompt /
 memory reset URLs and any assumption that history cannot be updated over HTTP
 are obsolete. Clients that previously assumed every turn used
 `answer_with_choices` must now pass that schema (or another) as

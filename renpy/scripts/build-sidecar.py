@@ -1,10 +1,10 @@
 """Build the local FastAPI server as a platform-native PyInstaller sidecar.
 
-Run from the electron directory after installing the local packages and PyInstaller:
+Run from the renpy directory after installing the local packages and PyInstaller:
     pip install ../kernel ../local_server pyinstaller
     python scripts/build-sidecar.py
 
-Use --output-dir to place the executable in another frontend's resources.
+Use --output-dir to place the executable somewhere other than game/server.
 """
 
 from __future__ import annotations
@@ -17,11 +17,11 @@ import sys
 from pathlib import Path
 
 
-ELECTRON_DIR = Path(__file__).resolve().parents[1]
-REPO_DIR = ELECTRON_DIR.parent
-DEFAULT_OUTPUT_DIR = ELECTRON_DIR / "resources" / "server"
-BUILD_DIR = ELECTRON_DIR / ".sidecar-build"
-ENTRYPOINT = ELECTRON_DIR / ".sidecar-entry.py"
+RENPY_DIR = Path(__file__).resolve().parents[1]
+REPO_DIR = RENPY_DIR.parent
+DEFAULT_OUTPUT_DIR = RENPY_DIR / "game" / "server"
+BUILD_DIR = RENPY_DIR / ".sidecar-build"
+ENTRYPOINT = RENPY_DIR / ".sidecar-entry.py"
 
 
 def main() -> None:
@@ -65,18 +65,27 @@ def main() -> None:
         str(REPO_DIR / "kernel"),
         "--paths",
         str(REPO_DIR / "local_server"),
-        "--add-data",
-        f"{data_source}{separator}amnesia_agent_local_server/data",
-        "--collect-data",
-        "litellm",
-        "--collect-data",
-        "tiktoken",
-        "--collect-submodules",
-        "tiktoken_ext",
-        str(ENTRYPOINT),
     ]
+    if data_source.is_dir():
+        command.extend(
+            [
+                "--add-data",
+                f"{data_source}{separator}amnesia_agent_local_server/data",
+            ]
+        )
+    command.extend(
+        [
+            "--collect-data",
+            "litellm",
+            "--collect-data",
+            "tiktoken",
+            "--collect-submodules",
+            "tiktoken_ext",
+            str(ENTRYPOINT),
+        ]
+    )
     try:
-        subprocess.run(command, cwd=ELECTRON_DIR, check=True)
+        subprocess.run(command, cwd=RENPY_DIR, check=True)
     finally:
         ENTRYPOINT.unlink(missing_ok=True)
 

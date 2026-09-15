@@ -25,29 +25,30 @@ keeps re-deciding as conditions change:
 - **Its own capabilities** — nothing is impossible with bash: install packages, call APIs, compile code, write scripts. Whatever ability the agent lacks, it builds itself into its workspace, not into this code.
 - **Its own workspace** — everything it learns, builds, and improves lives in `~/.amnesia-agent/`. Task after task, the workspace grows while the program running it stays exactly the same.
 
-An agent doesn't need dozens of bespoke tools; it needs **one tool that can do everything**, and the freedom to use it. The harness's only jobs are relaying messages, executing bash, failing loudly when something breaks — and it does them as a **headless kernel**: the terminal CLI is just one front-end, and you can build others (web UIs, bots, voice agents) on the same core.
+An agent doesn't need dozens of bespoke tools; it needs **one tool that can do everything**, and the freedom to use it. The harness's only jobs are relaying messages, executing bash, failing loudly when something breaks — and it does them as a **headless kernel**. The Ren'Py frontend is the shipping UI; you can build others (web UIs, bots, voice agents) on the same core.
 
 ## Quick start
 
 ```text
 pip install ./kernel
-pip install ./cli
-amnesia-agent
+pip install ./local_server
+amnesia-agent-local-server
 ```
 
-Set your model and API key in `~/.amnesia-agent-cli/config.json` (the CLI opens
-it automatically when configuration is missing).
+Open the Ren'Py project in [`renpy/`](renpy/) with the Ren'Py launcher. The game
+starts the local server and streams agent events over HTTP. Set your model and
+API key in `~/.amnesia-agent-local-server/config.json` (or via the in-game
+settings screen).
 
 ## Packages
 
-`amnesia-agent` is a minimal self-directed LLM agent split into five sub-projects:
+`amnesia-agent` is a minimal self-directed LLM agent split into three sub-projects
+plus one frontend:
 
 | Package | Description |
 |---|---|
 | [`kernel/`](kernel/) | Frontend-agnostic async agent kernel — the core. |
-| [`cli/`](cli/) | Minimal terminal CLI and configuration store. |
 | [`local_server/`](local_server/) | Reusable loopback FastAPI server for desktop frontends. |
-| [`electron/`](electron/) | Responsive Electron + React + TypeScript desktop client. |
 | [`renpy/`](renpy/) | Ren'Py client that launches the local server and streams agent events. |
 
 ## Project structure
@@ -56,34 +57,29 @@ it automatically when configuration is missing).
 amnesia-agent/
 ├── kernel/                  # amnesia-agent-kernel (pip package)
 │   └── amnesia_agent_kernel/
-├── cli/                     # amnesia-agent-cli (pip package)
-│   └── amnesia_agent_cli/
 ├── local_server/            # amnesia-agent-local-server (pip package)
 │   └── amnesia_agent_local_server/
-├── electron/                # amnesia-agent-desktop (npm package)
-│   └── src/
-├── renpy/                   # Ren'Py game project
+├── renpy/                   # Ren'Py game project (only shipping frontend)
 │   └── game/
 └── .github/workflows/ci.yml
 ```
 
-The **kernel** is the core. The **CLI** and **local server** both depend on it.
-The **Electron** app and **Ren'Py** frontend both talk to the local server over
-HTTP, streaming agent events via Server-Sent Events.
+The **kernel** is the core. The **local server** depends on it. The **Ren'Py**
+frontend talks to the local server over HTTP, streaming agent events via
+Server-Sent Events.
 
 ## Development
 
-Install all Python packages in editable mode:
+Install Python packages in editable mode:
 
 ```text
-pip install -e ./kernel -e ./cli -e ./local_server
+pip install -e ./kernel -e ./local_server
 ```
 
 Run linters and type checks:
 
 ```text
 cd kernel && ruff check . && mypy
-cd cli && ruff check . && mypy
 cd local_server && ruff check . && mypy
 ```
 
@@ -91,10 +87,8 @@ Run tests:
 
 ```text
 cd kernel && python -m unittest discover
-cd cli && python -m unittest discover
 cd local_server && python -m unittest discover
 cd renpy && python -m unittest discover
-cd electron && npm test
 ```
 
 See each sub-project's README for specific setup instructions.

@@ -31,3 +31,9 @@ htmlcov/
 .mimosa/
 .ruff_cache/
 .mypy_cache/
+
+# PyInstaller sidecar scratch (renpy/scripts/build-sidecar.py)
+.sidecar-build/
+.sidecar-entry.py
+renpy/.sidecar-build/
+renpy/.sidecar-entry.py
