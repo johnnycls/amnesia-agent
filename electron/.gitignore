@@ -1,8 +1,0 @@
-node_modules/
-dist/
-dist-electron/
-release/
-.sidecar-build/
-.sidecar-entry.py
-resources/server/amnesia-agent-local-server
-resources/server/amnesia-agent-local-server.exe

@@ -18,9 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       kernel: ${{ steps.select.outputs.kernel }}
-      cli: ${{ steps.select.outputs.cli }}
       local_server: ${{ steps.select.outputs.local_server }}
-      electron: ${{ steps.select.outputs.electron }}
       renpy: ${{ steps.select.outputs.renpy }}
       workflows: ${{ steps.select.outputs.workflows }}
     steps:
@@ -32,12 +30,8 @@ jobs:
           filters: |
             kernel:
               - 'kernel/**'
-            cli:
-              - 'cli/**'
             local_server:
               - 'local_server/**'
-            electron:
-              - 'electron/**'
             renpy:
               - 'renpy/**'
             workflows:
@@ -59,18 +53,14 @@ jobs:
 
           if [[ "$force_all" == "true" ]]; then
             set_out kernel true
-            set_out cli true
             set_out local_server true
-            set_out electron true
             set_out renpy true
             set_out workflows true
             exit 0
           fi
 
           kernel="${{ steps.filter.outputs.kernel }}"
-          cli="${{ steps.filter.outputs.cli }}"
           local_server="${{ steps.filter.outputs.local_server }}"
-          electron="${{ steps.filter.outputs.electron }}"
           renpy="${{ steps.filter.outputs.renpy }}"
           workflows="${{ steps.filter.outputs.workflows }}"
 
@@ -80,9 +70,7 @@ jobs:
           fi
 
           set_out kernel "$kernel"
-          set_out cli "$cli"
           set_out local_server "$local_server"
-          set_out electron "$electron"
           set_out renpy "$renpy"
           set_out workflows "$workflows"
 
@@ -99,21 +87,6 @@ jobs:
       - working-directory: kernel
         run: ruff check .
       - working-directory: kernel
-        run: mypy
-
-  cli-lint:
-    needs: changes
-    if: needs.changes.outputs.cli == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
-      - run: python -m pip install ./kernel ./cli ruff mypy
-      - working-directory: cli
-        run: ruff check .
-      - working-directory: cli
         run: mypy
 
   local-server-lint:
@@ -147,24 +120,6 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: python -m pip install ./kernel
       - working-directory: kernel
-        run: python -m unittest discover -t . -s tests -v
-
-  cli-test:
-    needs: changes
-    if: needs.changes.outputs.cli == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        python-version: ["3.10", "3.14"]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: ${{ matrix.python-version }}
-      - run: python -m pip install ./kernel ./cli
-      - working-directory: cli
         run: python -m unittest discover -t . -s tests -v
 
   local-server-test:
@@ -207,7 +162,6 @@ jobs:
     needs: changes
     if: >-
       needs.changes.outputs.kernel == 'true'
-      || needs.changes.outputs.cli == 'true'
       || needs.changes.outputs.local_server == 'true'
     runs-on: ubuntu-latest
     steps:
@@ -223,30 +177,6 @@ jobs:
         with:
           name: python-kernel-dist
           path: dist/kernel
-          if-no-files-found: error
-
-  cli-build:
-    needs: [changes, kernel-build]
-    if: needs.changes.outputs.cli == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
-      - uses: actions/download-artifact@v8
-        with:
-          name: python-kernel-dist
-          path: dist/kernel
-      - run: python -m pip install --upgrade build
-      - run: python -m pip install --no-cache-dir --find-links dist/kernel amnesia-agent-kernel==0.0.0a0
-      - run: python -m build cli --outdir dist/cli
-      - run: python -m pip install --no-cache-dir --find-links dist/kernel dist/cli/*.whl
-      - run: python -c "import amnesia_agent_cli"
-      - uses: actions/upload-artifact@v7
-        with:
-          name: python-cli-dist
-          path: dist/cli
           if-no-files-found: error
 
   local-server-build:
@@ -271,46 +201,6 @@ jobs:
         with:
           name: python-local-server-dist
           path: dist/local-server
-          if-no-files-found: error
-
-  electron-build:
-    needs: changes
-    if: needs.changes.outputs.electron == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-latest
-            artifact: windows
-          - os: macos-latest
-            artifact: macos
-          - os: ubuntu-latest
-            artifact: linux
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: "24"
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
-      - working-directory: electron
-        run: python -m pip install ../kernel ../local_server pyinstaller
-      - working-directory: electron
-        run: npm ci
-      - working-directory: electron
-        run: npm run typecheck
-      - working-directory: electron
-        run: npm test
-      - working-directory: electron
-        run: npm run build:server
-      - working-directory: electron
-        run: npm run build
-      - uses: actions/upload-artifact@v7
-        with:
-          name: amnesia-agent-electron-${{ matrix.artifact }}
-          path: electron/release
           if-no-files-found: error
 
   renpy-build:
@@ -352,7 +242,7 @@ jobs:
           unzip -q .renpy-sdk/sdk.zip -d .renpy-sdk
           chmod +x .renpy-sdk/renpy-"$RENPY_VERSION"-sdk/renpy.sh
       - name: Build bundled local server
-        run: python electron/scripts/build-sidecar.py --output-dir renpy/game/server
+        run: python renpy/scripts/build-sidecar.py --output-dir renpy/game/server
       - name: Lint Ren'Py project (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -421,16 +311,12 @@ jobs:
     needs:
       - changes
       - kernel-lint
-      - cli-lint
       - local-server-lint
       - kernel-test
-      - cli-test
       - local-server-test
       - renpy-test
       - kernel-build
-      - cli-build
       - local-server-build
-      - electron-build
       - renpy-build
     runs-on: ubuntu-latest
     permissions:
@@ -441,31 +327,11 @@ jobs:
         with:
           name: python-kernel-dist
           path: release-assets/kernel
-      - name: Download Python CLI artifact
-        uses: actions/download-artifact@v8
-        with:
-          name: python-cli-dist
-          path: release-assets/cli
       - name: Download Python local server artifact
         uses: actions/download-artifact@v8
         with:
           name: python-local-server-dist
           path: release-assets/local-server
-      - name: Download Electron Windows artifact
-        uses: actions/download-artifact@v8
-        with:
-          name: amnesia-agent-electron-windows
-          path: release-assets/electron-windows
-      - name: Download Electron macOS artifact
-        uses: actions/download-artifact@v8
-        with:
-          name: amnesia-agent-electron-macos
-          path: release-assets/electron-macos
-      - name: Download Electron Linux artifact
-        uses: actions/download-artifact@v8
-        with:
-          name: amnesia-agent-electron-linux
-          path: release-assets/electron-linux
       - name: Download Ren'Py Windows artifact
         uses: actions/download-artifact@v8
         with:
@@ -487,11 +353,7 @@ jobs:
           set -euo pipefail
           cd "$GITHUB_WORKSPACE/release-assets"
           zip -qr python-kernel-dist.zip kernel
-          zip -qr python-cli-dist.zip cli
           zip -qr python-local-server-dist.zip local-server
-          zip -qr amnesia-agent-electron-windows.zip electron-windows
-          zip -qr amnesia-agent-electron-macos.zip electron-macos
-          zip -qr amnesia-agent-electron-linux.zip electron-linux
           zip -qr amnesia-agent-renpy-windows.zip renpy-windows
           zip -qr amnesia-agent-renpy-macos.zip renpy-macos
           zip -qr amnesia-agent-renpy-linux.zip renpy-linux
@@ -506,11 +368,7 @@ jobs:
           fail_on_unmatched_files: true
           files: |
             release-assets/python-kernel-dist.zip
-            release-assets/python-cli-dist.zip
             release-assets/python-local-server-dist.zip
-            release-assets/amnesia-agent-electron-windows.zip
-            release-assets/amnesia-agent-electron-macos.zip
-            release-assets/amnesia-agent-electron-linux.zip
             release-assets/amnesia-agent-renpy-windows.zip
             release-assets/amnesia-agent-renpy-macos.zip
             release-assets/amnesia-agent-renpy-linux.zip

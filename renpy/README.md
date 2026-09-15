@@ -64,9 +64,9 @@ font, use one with coverage for every language you keep enabled.
 
 The GitHub Actions workflow builds native Windows, macOS, and Linux distributions with Ren'Py
 8.5.3. Each distribution contains a platform-native `amnesia-agent-local-server` sidecar under
-`game/server`; the client automatically prefers that executable when it is present. The
-`AMNESIA_AGENT_PYTHON` override and `python -m amnesia_agent_local_server` fallback remain
-available for local development.
+`game/server` (built with `scripts/build-sidecar.py`); the client automatically prefers that
+executable when it is present. The `AMNESIA_AGENT_PYTHON` override and
+`python -m amnesia_agent_local_server` fallback remain available for local development.
 
 The server is intentionally loopback-only and executes the kernel's unrestricted bash tool, so
 both the packaged game and the development setup should only be run on a trusted desktop.
