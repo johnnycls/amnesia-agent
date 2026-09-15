@@ -18,3 +18,4 @@ screen workspace_settings_page():
         hbox:
             spacing 8
             textbutton _("Save memory") action Function(app.save_memory, memory_text)
+            textbutton _("Clear memory") action Confirm(_("Clear memory.md contents?"), Function(app.clear_memory))

@@ -124,6 +124,8 @@ class AppState:
         self._refresh()
 
     def _try_auto_open(self, path: str) -> None:
+        self._set_status("Opening workspace...")
+
         def work() -> None:
             try:
                 check = self.client.request_json(
@@ -147,7 +149,7 @@ class AppState:
 
     def _auto_open_fallback(self) -> None:
         self.page = "workspace_select"
-        self._refresh()
+        self._set_status("Could not open recent workspace")
 
     def _loading_failed(self, error: Exception) -> None:
         self.starting = False
@@ -439,6 +441,7 @@ class AppState:
     def load_workspace_files(self) -> None:
         if not self.workspace_path:
             return
+        self._set_status("Loading workspace...")
 
         def work() -> None:
             try:
@@ -480,11 +483,17 @@ class AppState:
         """Write the packaged Ren'Py default string (not a server soft-reset)."""
         self.save_system_prompt(DEFAULT_SYSTEM_PROMPT)
 
+    def clear_memory(self) -> None:
+        """Empty memory.md via PUT (not a kernel soft-reset)."""
+        self._put_workspace_file("/v1/workspace/memory", "", "memory_text")
+
     def _put_workspace_file(self, path: str, content: str, store_name: str) -> None:
-        if not self.workspace_path or self.busy:
+        if not self.workspace_path:
             return
-        self.status = localize("Saving workspace...")
-        self._refresh()
+        if self.busy:
+            self._set_status("Cannot save workspace while the agent is busy.")
+            return
+        self._set_status("Saving workspace...")
 
         def work() -> None:
             try:
@@ -515,6 +524,7 @@ class AppState:
     def load_history_dates(self) -> None:
         if not self.workspace_path:
             return
+        self._set_status("Loading history...")
 
         def work() -> None:
             try:
@@ -541,6 +551,7 @@ class AppState:
     def load_history_date(self, date: str) -> None:
         if not self.workspace_path:
             return
+        self._set_status("Loading history...")
 
         def work() -> None:
             try:
@@ -565,8 +576,12 @@ class AppState:
         self._refresh()
 
     def clear_history(self) -> None:
-        if not self.workspace_path or self.busy:
+        if not self.workspace_path:
             return
+        if self.busy:
+            self._set_status("Cannot clear history while the agent is busy.")
+            return
+        self._set_status("Clearing history...")
 
         def work() -> None:
             try:
@@ -602,6 +617,7 @@ class AppState:
         if self.renpy_config is not None:
             self.settings_language = self.renpy_config.language
             self._set_store("settings_language", self.settings_language)
+        self._set_status("Loading settings...")
 
         def work() -> None:
             try:
@@ -650,8 +666,7 @@ class AppState:
         context_limit: str,
     ) -> None:
         if self.busy:
-            self.status = localize("Cannot save config while the agent is busy.")
-            self._refresh()
+            self._set_status("Cannot save config while the agent is busy.")
             return
         try:
             provider_params = json.loads(provider_params_text or "{}")
@@ -699,8 +714,7 @@ class AppState:
 
     def reset_local_server_config(self) -> None:
         if self.busy:
-            self.status = localize("Cannot reset config while the agent is busy.")
-            self._refresh()
+            self._set_status("Cannot reset config while the agent is busy.")
             return
         self.status = localize("Resetting settings...")
         self._refresh()
@@ -766,8 +780,7 @@ class AppState:
 
     def quit_app(self) -> None:
         if self.busy:
-            self.status = localize("Cannot quit while the agent is busy.")
-            self._refresh()
+            self._set_status("Cannot quit while the agent is busy.")
             return
         self.server.stop()
         self.ready = False
@@ -780,6 +793,10 @@ class AppState:
         self.server.stop()
 
     # --- helpers -------------------------------------------------------------
+
+    def _set_status(self, template: str, **values: Any) -> None:
+        self.status = localize(template, **values)
+        self._refresh()
 
     def _refresh(self) -> None:
         if renpy is not None:

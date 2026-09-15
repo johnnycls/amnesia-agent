@@ -38,6 +38,12 @@ translate schinese strings:
     old "Cannot save config while the agent is busy."
     new "智能体忙碌时无法保存配置。"
 
+    old "Cannot clear history while the agent is busy."
+    new "智能体忙碌时无法清除历史记录。"
+
+    old "Cannot save workspace while the agent is busy."
+    new "智能体忙碌时无法保存工作区。"
+
     old "Choose a folder"
     new "选择文件夹"
 
@@ -50,6 +56,15 @@ translate schinese strings:
     old "Clear all history?"
     new "清除全部历史记录？"
 
+    old "Clear memory"
+    new "清除记忆"
+
+    old "Clear memory.md contents?"
+    new "清除 memory.md 内容？"
+
+    old "Clearing history..."
+    new "正在清除历史记录……"
+
     old "Command timeout seconds"
     new "命令超时秒数"
 
@@ -58,6 +73,9 @@ translate schinese strings:
 
     old "Config error: {error}"
     new "配置错误：{error}"
+
+    old "Could not open recent workspace"
+    new "无法打开最近的工作区"
 
     old "Create"
     new "创建"
@@ -106,6 +124,15 @@ translate schinese strings:
 
     old "Loading"
     new "加载中"
+
+    old "Loading history..."
+    new "正在加载历史记录……"
+
+    old "Loading settings..."
+    new "正在加载设置……"
+
+    old "Loading workspace..."
+    new "正在加载工作区……"
 
     old "Local server settings reset"
     new "本地服务器设置已重置"
@@ -306,6 +333,12 @@ translate tchinese strings:
     old "Cannot save config while the agent is busy."
     new "智能體忙碌時無法儲存設定。"
 
+    old "Cannot clear history while the agent is busy."
+    new "智能體忙碌時無法清除歷史記錄。"
+
+    old "Cannot save workspace while the agent is busy."
+    new "智能體忙碌時無法儲存工作區。"
+
     old "Choose a folder"
     new "選擇資料夾"
 
@@ -318,6 +351,15 @@ translate tchinese strings:
     old "Clear all history?"
     new "清除所有歷史記錄？"
 
+    old "Clear memory"
+    new "清除記憶"
+
+    old "Clear memory.md contents?"
+    new "清除 memory.md 內容？"
+
+    old "Clearing history..."
+    new "正在清除歷史記錄……"
+
     old "Command timeout seconds"
     new "命令逾時秒數"
 
@@ -326,6 +368,9 @@ translate tchinese strings:
 
     old "Config error: {error}"
     new "設定錯誤：{error}"
+
+    old "Could not open recent workspace"
+    new "無法開啟最近的工作區"
 
     old "Create"
     new "建立"
@@ -374,6 +419,15 @@ translate tchinese strings:
 
     old "Loading"
     new "載入中"
+
+    old "Loading history..."
+    new "正在載入歷史記錄……"
+
+    old "Loading settings..."
+    new "正在載入設定……"
+
+    old "Loading workspace..."
+    new "正在載入工作區……"
 
     old "Local server settings reset"
     new "本機伺服器設定已重設"
@@ -574,6 +628,12 @@ translate japanese strings:
     old "Cannot save config while the agent is busy."
     new "エージェント処理中は設定を保存できません。"
 
+    old "Cannot clear history while the agent is busy."
+    new "エージェント処理中は履歴を消去できません。"
+
+    old "Cannot save workspace while the agent is busy."
+    new "エージェント処理中はワークスペースを保存できません。"
+
     old "Choose a folder"
     new "フォルダを選択"
 
@@ -586,6 +646,15 @@ translate japanese strings:
     old "Clear all history?"
     new "履歴をすべて消去しますか？"
 
+    old "Clear memory"
+    new "メモリを消去"
+
+    old "Clear memory.md contents?"
+    new "memory.md の内容を消去しますか？"
+
+    old "Clearing history..."
+    new "履歴を消去しています……"
+
     old "Command timeout seconds"
     new "コマンドのタイムアウト秒数"
 
@@ -594,6 +663,9 @@ translate japanese strings:
 
     old "Config error: {error}"
     new "設定エラー：{error}"
+
+    old "Could not open recent workspace"
+    new "最近のワークスペースを開けませんでした"
 
     old "Create"
     new "作成"
@@ -642,6 +714,15 @@ translate japanese strings:
 
     old "Loading"
     new "読み込み中"
+
+    old "Loading history..."
+    new "履歴を読み込んでいます……"
+
+    old "Loading settings..."
+    new "設定を読み込んでいます……"
+
+    old "Loading workspace..."
+    new "ワークスペースを読み込んでいます……"
 
     old "Local server settings reset"
     new "ローカルサーバー設定をリセットしました"
@@ -842,6 +923,12 @@ translate korean strings:
     old "Cannot save config while the agent is busy."
     new "에이전트가 바쁠 때는 구성을 저장할 수 없습니다."
 
+    old "Cannot clear history while the agent is busy."
+    new "에이전트가 바쁠 때는 기록을 삭제할 수 없습니다."
+
+    old "Cannot save workspace while the agent is busy."
+    new "에이전트가 바쁠 때는 작업 공간을 저장할 수 없습니다."
+
     old "Choose a folder"
     new "폴더 선택"
 
@@ -854,6 +941,15 @@ translate korean strings:
     old "Clear all history?"
     new "모든 기록을 삭제할까요?"
 
+    old "Clear memory"
+    new "메모리 삭제"
+
+    old "Clear memory.md contents?"
+    new "memory.md 내용을 삭제할까요?"
+
+    old "Clearing history..."
+    new "기록을 삭제하는 중..."
+
     old "Command timeout seconds"
     new "명령 시간 제한(초)"
 
@@ -862,6 +958,9 @@ translate korean strings:
 
     old "Config error: {error}"
     new "구성 오류: {error}"
+
+    old "Could not open recent workspace"
+    new "최근 작업 공간을 열 수 없습니다"
 
     old "Create"
     new "만들기"
@@ -910,6 +1009,15 @@ translate korean strings:
 
     old "Loading"
     new "로딩 중"
+
+    old "Loading history..."
+    new "기록을 불러오는 중..."
+
+    old "Loading settings..."
+    new "설정을 불러오는 중..."
+
+    old "Loading workspace..."
+    new "작업 공간을 불러오는 중..."
 
     old "Local server settings reset"
     new "로컬 서버 설정이 초기화되었습니다"
