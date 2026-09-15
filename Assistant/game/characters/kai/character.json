@@ -11,6 +11,9 @@
     "neutral": "sprites/neutral.png",
     "smile": "sprites/smile.png",
     "think": "sprites/think.png",
-    "busy": "sprites/busy.png"
+    "busy": "sprites/busy.png",
+    "surprised": "sprites/surprised.png",
+    "sad": "sprites/sad.png",
+    "shy": "sprites/shy.png"
   }
 }
