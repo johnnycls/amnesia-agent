@@ -8,6 +8,7 @@ from amnesia_agent_kernel.workspace import (
     Workspace,
     check_workspace,
     create_or_reset_workspace,
+    create_workspace,
     setup_or_repair_workspace,
 )
 
@@ -84,14 +85,23 @@ class WorkspaceLifecycleTests(unittest.TestCase):
             self.assertFalse((root / "history").exists())
             self.assertTrue(check_workspace(root))
 
-    def test_create_or_reset_soft_empties_prompt_memory_and_history(self) -> None:
+    def test_create_or_reset_hard_wipes_prompt_memory_history_and_extras(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = self._seed_workspace(directory)
+            extra = root / "notes.txt"
+            extra.write_text("wipe-me", encoding="utf-8")
+            nested = root / "assets" / "image.png"
+            nested.parent.mkdir()
+            nested.write_bytes(b"png")
+
             result = create_or_reset_workspace(root)
             self.assertIsNone(result)
             self.assertEqual((root / "system_prompt.md").read_text(encoding="utf-8"), "")
             self.assertEqual((root / "memory.md").read_text(encoding="utf-8"), "")
             self.assertFalse((root / "history").exists())
+            self.assertFalse(extra.exists())
+            self.assertFalse(nested.exists())
+            self.assertFalse((root / "assets").exists())
             self.assertTrue(check_workspace(root))
 
         with tempfile.TemporaryDirectory() as directory:
@@ -101,23 +111,34 @@ class WorkspaceLifecycleTests(unittest.TestCase):
             self.assertEqual((missing / "system_prompt.md").read_text(encoding="utf-8"), "")
             self.assertEqual((missing / "memory.md").read_text(encoding="utf-8"), "")
 
-    def test_create_or_reset_preserves_extra_workspace_files(self) -> None:
+    def test_create_workspace_allows_missing_or_empty(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            missing = Path(directory) / "fresh"
+            create_workspace(missing)
+            self.assertTrue(missing.is_dir())
+            self.assertEqual((missing / "system_prompt.md").read_text(encoding="utf-8"), "")
+            self.assertEqual((missing / "memory.md").read_text(encoding="utf-8"), "")
+            self.assertTrue(check_workspace(missing))
+
+        with tempfile.TemporaryDirectory() as directory:
+            empty = Path(directory) / "empty"
+            empty.mkdir()
+            KernelSession.create_workspace(empty)
+            self.assertEqual((empty / "system_prompt.md").read_text(encoding="utf-8"), "")
+            self.assertEqual((empty / "memory.md").read_text(encoding="utf-8"), "")
+            self.assertTrue(check_workspace(empty))
+
+    def test_create_workspace_refuses_nonempty(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = self._seed_workspace(directory)
-            extra = root / "notes.txt"
-            extra.write_text("keep-me", encoding="utf-8")
-            nested = root / "assets" / "image.png"
-            nested.parent.mkdir()
-            nested.write_bytes(b"png")
-
-            create_or_reset_workspace(root)
-
-            self.assertEqual((root / "system_prompt.md").read_text(encoding="utf-8"), "")
-            self.assertEqual((root / "memory.md").read_text(encoding="utf-8"), "")
-            self.assertFalse((root / "history").exists())
-            self.assertEqual(extra.read_text(encoding="utf-8"), "keep-me")
-            self.assertEqual(nested.read_bytes(), b"png")
-            self.assertTrue(check_workspace(root))
+            with self.assertRaises(WorkspaceError):
+                create_workspace(root)
+            with self.assertRaises(WorkspaceError):
+                KernelSession.create_workspace(root)
+            # Non-empty content must survive a refused create.
+            self.assertEqual((root / "system_prompt.md").read_text(encoding="utf-8"), "prompt-keep")
+            self.assertEqual((root / "memory.md").read_text(encoding="utf-8"), "memory-keep")
+            self.assertTrue((root / "history" / "2026-08-28.jsonl").exists())
 
     def test_create_or_reset_rejects_non_directory_root(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

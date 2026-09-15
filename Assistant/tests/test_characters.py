@@ -29,6 +29,7 @@ class CharacterPackTests(unittest.TestCase):
             self.assertTrue(pack.prompt.strip())
             self.assertIn(pack.default_bg, pack.backgrounds)
             self.assertIn(pack.default_expression, pack.expressions)
+            self.assertIn("busy", pack.expressions)
             for path in pack.backgrounds.values():
                 self.assertTrue(Path(path).is_file(), path)
             for path in pack.expressions.values():

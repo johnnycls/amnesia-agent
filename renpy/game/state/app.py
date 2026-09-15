@@ -234,7 +234,7 @@ class AppState:
         threading.Thread(target=work, name="amnesia-pick-import", daemon=True).start()
 
     def pick_create_workspace(self) -> None:
-        """OS folder picker → Confirm → create_workspace (soft create-or-reset)."""
+        """OS folder picker → Confirm → create_workspace (empty-only create)."""
         if self.busy:
             return
 
@@ -247,10 +247,10 @@ class AppState:
         threading.Thread(target=work, name="amnesia-pick-create", daemon=True).start()
 
     def _confirm_create_workspace(self, path: str) -> None:
-        """Warn before soft-reset; same tone as invalid-page create-or-reset."""
+        """Confirm empty-only create; server refuses non-empty folders."""
         message = localize(
-            "Soft-reset this workspace? Prompt and memory will be emptied "
-            "and history cleared; other files stay."
+            "Create a workspace here? The folder must be empty (or new). "
+            "Prompt and memory will be initialized empty."
         )
         if renpy is not None and not renpy.confirm(message):
             return
@@ -322,7 +322,7 @@ class AppState:
             try:
                 self.client.request_json(
                     "POST",
-                    "/v1/workspace/create-or-reset",
+                    "/v1/workspace/create",
                     {"workspace_path": path},
                 )
                 invoke(self._opened_workspace, path)

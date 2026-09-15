@@ -32,9 +32,9 @@ screen workspace_invalid_page():
         text _("Workspace is not valid") size 28 bold True
         text _("Path:") style "app_small"
         text "[app.pending_workspace_path]" style "app_text"
-        text _("Choose setup or repair (keep files) or create or reset (soft reset: empty prompt/memory, clear history; other files kept).") style "app_small"
+        text _("Choose setup or repair (keep files) or create or reset (hard wipe: deletes the whole workspace folder contents, then recreates empty prompt and memory).") style "app_small"
         hbox:
             spacing 12
             textbutton _("Setup or repair") action Function(app.resolve_workspace_choice, "setup_or_repair")
-            textbutton _("Create or reset") action Confirm(_("Soft-reset this workspace? Prompt and memory will be emptied and history cleared; other files stay."), Function(app.resolve_workspace_choice, "create_or_reset"))
+            textbutton _("Create or reset") action Confirm(_("Hard-reset this workspace? This deletes the entire workspace folder contents, then recreates empty prompt and memory."), Function(app.resolve_workspace_choice, "create_or_reset"))
             textbutton _("Back") action Function(app.go_workspace_select)

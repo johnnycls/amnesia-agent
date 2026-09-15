@@ -60,7 +60,7 @@ translate schinese strings:
     old "Choose a folder"
     new "选择文件夹"
 
-    old "Choose setup or repair (keep files) or create or reset (soft reset: empty prompt/memory, clear history; other files kept)."
+    old "Choose setup or repair (keep files) or create or reset (hard wipe: deletes the whole workspace folder contents, then recreates empty prompt and memory)."
     new "选择设置或修复（保留文件），或创建或重置（软重置：清空提示词/记忆、清除历史；其他文件保留）。"
 
     old "Clear all history"
@@ -297,7 +297,7 @@ translate schinese strings:
     old "Unknown page"
     new "未知页面"
 
-    old "Soft-reset this workspace? Prompt and memory will be emptied and history cleared; other files stay."
+    old "Hard-reset this workspace? This deletes the entire workspace folder contents, then recreates empty prompt and memory."
     new "软重置此工作区？提示词与记忆将被清空，历史将被清除；其他文件保留。"
 
     old "Workspace Select"
@@ -380,7 +380,7 @@ translate tchinese strings:
     old "Choose a folder"
     new "選擇資料夾"
 
-    old "Choose setup or repair (keep files) or create or reset (soft reset: empty prompt/memory, clear history; other files kept)."
+    old "Choose setup or repair (keep files) or create or reset (hard wipe: deletes the whole workspace folder contents, then recreates empty prompt and memory)."
     new "選擇設定或修復（保留檔案），或建立或重設（軟重設：清空提示詞/記憶、清除歷史；其他檔案保留）。"
 
     old "Clear all history"
@@ -617,7 +617,7 @@ translate tchinese strings:
     old "Unknown page"
     new "未知頁面"
 
-    old "Soft-reset this workspace? Prompt and memory will be emptied and history cleared; other files stay."
+    old "Hard-reset this workspace? This deletes the entire workspace folder contents, then recreates empty prompt and memory."
     new "軟重設此工作區？提示詞與記憶將被清空，歷史將被清除；其他檔案保留。"
 
     old "Workspace Select"
@@ -700,7 +700,7 @@ translate japanese strings:
     old "Choose a folder"
     new "フォルダを選択"
 
-    old "Choose setup or repair (keep files) or create or reset (soft reset: empty prompt/memory, clear history; other files kept)."
+    old "Choose setup or repair (keep files) or create or reset (hard wipe: deletes the whole workspace folder contents, then recreates empty prompt and memory)."
     new "セットアップまたは修復（ファイルを保持）、あるいは作成またはリセット（ソフトリセット：プロンプト/メモリを空にし、履歴を削除。他のファイルは保持）を選んでください。"
 
     old "Clear all history"
@@ -937,7 +937,7 @@ translate japanese strings:
     old "Unknown page"
     new "不明なページ"
 
-    old "Soft-reset this workspace? Prompt and memory will be emptied and history cleared; other files stay."
+    old "Hard-reset this workspace? This deletes the entire workspace folder contents, then recreates empty prompt and memory."
     new "このワークスペースをソフトリセットしますか？プロンプトとメモリは空になり、履歴は削除されます。他のファイルはそのままです。"
 
     old "Workspace Select"
@@ -1020,7 +1020,7 @@ translate korean strings:
     old "Choose a folder"
     new "폴더 선택"
 
-    old "Choose setup or repair (keep files) or create or reset (soft reset: empty prompt/memory, clear history; other files kept)."
+    old "Choose setup or repair (keep files) or create or reset (hard wipe: deletes the whole workspace folder contents, then recreates empty prompt and memory)."
     new "설정 또는 복구(파일 유지), 또는 만들기 또는 초기화(소프트 리셋: 프롬프트/메모리 비우기, 기록 삭제; 다른 파일은 유지)를 선택하세요."
 
     old "Clear all history"
@@ -1257,7 +1257,7 @@ translate korean strings:
     old "Unknown page"
     new "알 수 없는 페이지"
 
-    old "Soft-reset this workspace? Prompt and memory will be emptied and history cleared; other files stay."
+    old "Hard-reset this workspace? This deletes the entire workspace folder contents, then recreates empty prompt and memory."
     new "이 작업 공간을 소프트 리셋할까요? 프롬프트와 메모리는 비워지고 기록이 삭제됩니다. 다른 파일은 유지됩니다."
 
     old "Workspace Select"

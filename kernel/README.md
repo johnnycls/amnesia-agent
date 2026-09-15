@@ -138,17 +138,20 @@ resolves to `~/.amnesia-agent`):
 2. `KernelSession.setup_or_repair_workspace(root=None) -> None` — mkdir parents;
    create empty prompt/memory files if missing. Does **not** wipe existing content
    and does **not** delete `history/`.
-3. `KernelSession.create_or_reset_workspace(root=None) -> None` — soft reset: if
-   `root` is missing, mkdir parents; if it exists as a directory, keep it (do
-   **not** `rmtree` the root); if it exists and is not a directory, raise
-   `WorkspaceError`. Always overwrite `system_prompt.md` and `memory.md` with
-   empty strings, and clear `history/` (same rules as `reset_history`). Leave
-   all other files/dirs under the workspace untouched.
+3. `KernelSession.create_workspace(root=None) -> None` — succeed only when `root`
+   is **missing** or an **empty** directory; then create empty prompt/memory.
+   Non-empty directories raise `WorkspaceError` (fail loud; do **not** wipe).
+   Non-directory paths raise `WorkspaceError`.
+4. `KernelSession.create_or_reset_workspace(root=None) -> None` — **hard** reset:
+   if `root` is missing, create empty prompt/memory; if it exists as a directory,
+   `rmtree` the whole root then recreate empty `system_prompt.md` and
+   `memory.md`; if it exists and is not a directory, raise `WorkspaceError`.
 
 Suggested frontend flow: **open → `check_workspace`; if ok, construct
 `KernelSession`; if not, let the user choose repair (`setup_or_repair_workspace`)
-or reset (`create_or_reset_workspace`)**, then open. Init setup remains
-idempotent after repair/reset.
+or hard reset (`create_or_reset_workspace`)**. Use `create_workspace` when
+creating a new empty folder (refuse non-empty). Init setup remains idempotent
+after repair/reset/create.
 
 When both the system prompt and memory are empty, the system message is omitted
 from the provider request. Non-empty values are joined with `\n\n`.
@@ -159,7 +162,8 @@ root = None  # or a path; None → ~/.amnesia-agent
 if not KernelSession.check_workspace(root):
     # Frontend: offer repair vs reset
     KernelSession.setup_or_repair_workspace(root)
-    # or: KernelSession.create_or_reset_workspace(root)
+    # or: KernelSession.create_or_reset_workspace(root)  # hard wipe
+    # or: KernelSession.create_workspace(root)  # empty-only
 
 session = KernelSession(provider, policy, workspace_root=root)
 
@@ -177,8 +181,9 @@ session.reset_history()
 ```
 
 **Breaking:** `workspace_mode` / `mode` and `reset_workspace` are removed; use
-`check_workspace`, `setup_or_repair_workspace`, and `create_or_reset_workspace`
-instead.
+`check_workspace`, `setup_or_repair_workspace`, `create_workspace`, and
+`create_or_reset_workspace` instead. `create_or_reset_workspace` is a hard wipe
+(`rmtree`), not a soft reset.
 
 `reset_system_prompt` and `reset_memory` remain removed.
 
@@ -250,8 +255,9 @@ configuration paths.
 - Default command timeout is **1800** seconds.
 - Removed `reset_system_prompt` and `reset_memory`.
 - Removed `workspace_mode` / `mode` and `reset_workspace`; use
-  `KernelSession.check_workspace`, `setup_or_repair_workspace`, and
-  `create_or_reset_workspace` instead.
+  `KernelSession.check_workspace`, `setup_or_repair_workspace`,
+  `create_workspace`, and `create_or_reset_workspace` instead.
+- `create_or_reset_workspace` is a hard wipe (`rmtree`), not a soft reset.
 - History is role-only; `kind` events are gone.
 - Provider/cancel failures append user-role history messages then raise.
 - `provider_params` is `Mapping[str, Any] | None` and is not scalar-validated.

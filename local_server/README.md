@@ -207,7 +207,8 @@ expanduser + resolve in the kernel). Invalid roots fail loud as `WorkspaceError`
 ```text
 GET  /v1/workspace/check?workspace_path=...                → {"ok": true|false}
 POST /v1/workspace/setup-or-repair   {"workspace_path"?}   → create missing dir / empty prompt+memory
-POST /v1/workspace/create-or-reset   {"workspace_path"?}   → soft reset: empty prompt/memory, clear history/; keep other files
+POST /v1/workspace/create            {"workspace_path"?}   → empty-only create (missing or empty dir); HTTP 400 if non-empty
+POST /v1/workspace/create-or-reset   {"workspace_path"?}   → hard wipe: rmtree root then empty prompt/memory
 
 GET  /v1/workspace/system-prompt?workspace_path=...        → {"content":"..."}
 PUT  /v1/workspace/system-prompt     {"content","workspace_path"?}
@@ -224,7 +225,7 @@ POST /v1/workspace/history/reset     {"workspace_path"?}   → {"reset": true}
 `PUT /v1/workspace/history` mirrors `KernelSession.update_history(messages, date)`:
 optional `date` defaults to today when omitted/null.
 
-Suggested open flow: **check → if not ok, setup-or-repair or create-or-reset →
+Suggested open flow: **check → if not ok, setup-or-repair or create-or-reset (hard wipe) →
 then read/update / turn**. While a turn is active on a resolved path, **workspace
 writes for that path** return **409** (`require_idle_for_path`):
 `update_system_prompt`, `update_memory`, `update_history`, history reset,

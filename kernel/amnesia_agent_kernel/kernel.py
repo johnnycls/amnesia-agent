@@ -30,8 +30,8 @@ class KernelSession:
         self.policy = selected_policy
         # Workspace.__init__ always setup_or_repair's (idempotent empty-file ensure).
         # Frontends that want a strict open should call check_workspace first; if
-        # not ok, call setup_or_repair_workspace or create_or_reset_workspace
-        # before (or instead of) relying on init setup for UX alone.
+        # not ok, call setup_or_repair_workspace, create_workspace, or
+        # create_or_reset_workspace before (or instead of) relying on init setup.
         self._workspace = Workspace(workspace_root)
         self._turn_open = False
 
@@ -58,11 +58,20 @@ class KernelSession:
         workspace_api.setup_or_repair_workspace(root)
 
     @staticmethod
-    def create_or_reset_workspace(root: str | os.PathLike[str] | None = None) -> None:
-        """Soft-reset: empty prompt/memory, clear ``history/``; keep other files.
+    def create_workspace(root: str | os.PathLike[str] | None = None) -> None:
+        """Create workspace only when missing or an empty directory.
 
-        Missing root is created. An existing directory is kept (not wiped). A
-        non-directory path raises ``WorkspaceError``.
+        Non-empty directories and non-directory paths raise ``WorkspaceError``.
+        Does not wipe existing trees.
+        """
+        workspace_api.create_workspace(root)
+
+    @staticmethod
+    def create_or_reset_workspace(root: str | os.PathLike[str] | None = None) -> None:
+        """Hard-reset: wipe the workspace root, then create empty prompt/memory.
+
+        Missing root is created via setup. An existing directory is removed with
+        ``rmtree`` then recreated. A non-directory path raises ``WorkspaceError``.
         """
         workspace_api.create_or_reset_workspace(root)
 

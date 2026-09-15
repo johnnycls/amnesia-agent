@@ -23,7 +23,7 @@ Main Page:
 	Cancel = disconnect SSE
 
 Workspace Setting Page:
-	read system prompt, update, reset (packaged Ren'Py default string — NOT server soft-reset)
+	read system prompt, update, reset (packaged Ren'Py default string — NOT server hard-reset / empty-only create)
 	read memory, update
 	No history here
 

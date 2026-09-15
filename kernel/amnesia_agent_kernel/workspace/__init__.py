@@ -1,6 +1,7 @@
 """Kernel-owned persistent workspace state."""
 
 import os
+import shutil
 import stat
 from collections.abc import Callable, Sequence
 from datetime import datetime, timezone
@@ -32,9 +33,7 @@ def check_workspace(root: str | os.PathLike[str] | None = None) -> bool:
         memory = path / "memory.md"
         return prompt.is_file() and memory.is_file()
     except OSError as e:
-        raise WorkspaceError(
-            f"Cannot check workspace {path}: {e}", path=str(path)
-        ) from e
+        raise WorkspaceError(f"Cannot check workspace {path}: {e}", path=str(path)) from e
 
 
 def setup_or_repair_workspace(root: str | os.PathLike[str] | None = None) -> None:
@@ -46,28 +45,69 @@ def setup_or_repair_workspace(root: str | os.PathLike[str] | None = None) -> Non
     workspace_files.setup_workspace_files(path)
 
 
-def create_or_reset_workspace(root: str | os.PathLike[str] | None = None) -> None:
-    """Soft-reset a workspace: empty prompt/memory, clear ``history/``, keep other files.
+def create_workspace(root: str | os.PathLike[str] | None = None) -> None:
+    """Create a workspace only when ``root`` is missing or an empty directory.
 
-    - Missing root: create the directory (parents as needed).
-    - Existing directory: keep it (do not ``rmtree`` the root).
+    - Missing root: create via ``setup_workspace_files`` (empty prompt/memory).
+    - Existing empty directory: same setup (idempotent empty files).
+    - Existing non-empty directory: raise ``WorkspaceError`` (do not wipe).
     - Existing non-directory: raise ``WorkspaceError``.
-    - Always overwrite ``system_prompt.md`` and ``memory.md`` with ``""``.
-    - Clear ``history/`` via the same rules as ``HistoryStore.reset_history``.
-    - Leave all other files and directories under the workspace untouched.
     """
     path = resolve_root(root)
     try:
         try:
             root_mode = path.stat().st_mode
         except FileNotFoundError:
-            path.mkdir(parents=True, exist_ok=True)
-        else:
-            if not stat.S_ISDIR(root_mode):
-                raise WorkspaceError(
-                    f"Workspace root is not a directory: {path}",
-                    path=str(path),
-                )
+            workspace_files.setup_workspace_files(path)
+            return
+        if not stat.S_ISDIR(root_mode):
+            raise WorkspaceError(
+                f"Workspace root is not a directory: {path}",
+                path=str(path),
+            )
+        try:
+            entries = list(path.iterdir())
+        except OSError as e:
+            raise WorkspaceError(
+                f"Cannot inspect workspace {path}: {e}",
+                path=str(path),
+            ) from e
+        if entries:
+            raise WorkspaceError(
+                f"Workspace root is not empty: {path}",
+                path=str(path),
+            )
+    except WorkspaceError:
+        raise
+    except OSError as e:
+        raise WorkspaceError(
+            f"Cannot create workspace {path}: {e}",
+            path=str(path),
+        ) from e
+    workspace_files.setup_workspace_files(path)
+
+
+def create_or_reset_workspace(root: str | os.PathLike[str] | None = None) -> None:
+    """Hard-reset a workspace: wipe the root directory, then empty prompt/memory.
+
+    - Missing root: create via ``setup_workspace_files``.
+    - Existing directory: ``rmtree`` the whole root, then setup empty
+      ``system_prompt.md`` and ``memory.md``.
+    - Existing non-directory: raise ``WorkspaceError``.
+    """
+    path = resolve_root(root)
+    try:
+        try:
+            root_mode = path.stat().st_mode
+        except FileNotFoundError:
+            workspace_files.setup_workspace_files(path)
+            return
+        if not stat.S_ISDIR(root_mode):
+            raise WorkspaceError(
+                f"Workspace root is not a directory: {path}",
+                path=str(path),
+            )
+        shutil.rmtree(path)
     except WorkspaceError:
         raise
     except OSError as e:
@@ -75,9 +115,7 @@ def create_or_reset_workspace(root: str | os.PathLike[str] | None = None) -> Non
             f"Cannot reset workspace {path}: {e}",
             path=str(path),
         ) from e
-    workspace_files.write_text(path, "system_prompt.md", "")
-    workspace_files.write_text(path, "memory.md", "")
-    HistoryStore(path, lambda: datetime.now(timezone.utc)).reset_history()
+    workspace_files.setup_workspace_files(path)
 
 
 class Workspace:
@@ -93,16 +131,21 @@ class Workspace:
         self._history = HistoryStore(self.root, self._clock)
         # Lightweight open path: ensure empty files if missing (idempotent).
         # Frontends that want a strict open should call check_workspace first;
-        # if not ok, call setup_or_repair_workspace or create_or_reset_workspace
-        # before relying on init setup alone for UX.
+        # if not ok, call setup_or_repair_workspace, create_workspace, or
+        # create_or_reset_workspace before relying on init setup alone for UX.
         self.setup()
 
     def setup(self) -> None:
         """Create the workspace and empty kernel-owned files when missing."""
         workspace_files.setup_workspace_files(self.root)
 
+    def create(self) -> None:
+        """Create under the history lock when missing or empty; refuse non-empty."""
+        with self._history._history_lock:
+            create_workspace(self.root)
+
     def create_or_reset(self) -> None:
-        """Soft-reset under the history lock: empty prompt/memory, clear history/."""
+        """Hard-reset under the history lock: wipe root, then empty prompt/memory."""
         with self._history._history_lock:
             create_or_reset_workspace(self.root)
 
@@ -124,9 +167,7 @@ class Workspace:
     def read_history(self, date: str | None = None) -> list[AllMessageValues]:
         return self._history.read_history(date)
 
-    def update_history(
-        self, messages: Sequence[AllMessageValues], date: str | None = None
-    ) -> None:
+    def update_history(self, messages: Sequence[AllMessageValues], date: str | None = None) -> None:
         self._history.update_history(messages, date)
 
     def append_history(self, message: AllMessageValues) -> None:

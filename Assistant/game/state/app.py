@@ -8,6 +8,7 @@ from typing import Any
 from api.client import ApiError, Client, TurnHandle, invoke
 from characters.loader import CharacterError, CharacterPack, load_all_characters
 from process.lifecycle import ServerProcess
+
 from state.stage import apply_stage
 
 try:
@@ -140,6 +141,55 @@ class AppState:
         self.status = "Select a character"
         self._refresh()
 
+    def reset_default_workspace(self) -> None:
+        """Confirm then hard-reset ~/.amnesia-agent and re-apply the current character."""
+        if self.busy or not self.ready:
+            return
+        pack = self.character
+        if pack is None:
+            self.status = "Select a character before resetting the workspace."
+            self._refresh()
+            return
+        message = (
+            "Hard-reset the default workspace? This deletes the entire "
+            "~/.amnesia-agent folder contents."
+        )
+        if renpy is not None and not renpy.confirm(message):
+            return
+        self.status = "Resetting workspace..."
+        self._refresh()
+
+        def work() -> None:
+            try:
+                # Default workspace: omit workspace_path.
+                self.client.request_json("POST", "/v1/workspace/create-or-reset")
+                self.client.request_json(
+                    "PUT",
+                    "/v1/workspace/system-prompt",
+                    {"content": pack.prompt},
+                )
+                invoke(self._reset_ok, pack)
+            except Exception as error:  # noqa: BLE001
+                invoke(self._reset_failed, error)
+
+        threading.Thread(target=work, name="assistant-reset-ws", daemon=True).start()
+
+    def _reset_ok(self, pack: CharacterPack) -> None:
+        self.character = pack
+        self.current_bg = pack.default_bg
+        self.current_expression = pack.default_expression
+        self.last_assistant_text = ""
+        self.last_assistant_choices = []
+        self._sync_stage_paths()
+        self.status = "Workspace reset"
+        self.error = ""
+        self._refresh()
+
+    def _reset_failed(self, error: Exception) -> None:
+        self.status = f"Workspace reset failed: {error}"
+        self.error = str(error)
+        self._refresh()
+
     # --- main / turn ---------------------------------------------------------
 
     def send(self, text: str) -> None:
@@ -150,6 +200,7 @@ class AppState:
         self._set_store("input_text", "")
         self.last_assistant_choices = []
         self.busy = True
+        self._sync_stage_paths()
         self.status = "Thinking..."
         self._refresh()
         self.turn_handle = self.client.stream_turn(
@@ -177,6 +228,7 @@ class AppState:
     def _finish_cancelled(self) -> None:
         self.busy = False
         self.turn_handle = None
+        self._sync_stage_paths()
         self.status = "Cancelled"
         self._refresh()
 
@@ -202,10 +254,12 @@ class AppState:
             self.last_assistant_text = f"Error: {message}"
             self.last_assistant_choices = []
             self.busy = False
+            self._sync_stage_paths()
             self.status = "Request failed"
         elif event_type == "done":
             self.busy = False
             self.turn_handle = None
+            self._sync_stage_paths()
             if not self.status.startswith("Warning"):
                 self.status = "Ready"
         self._refresh()
@@ -217,7 +271,7 @@ class AppState:
         result = apply_stage(
             data,
             background_ids=set(pack.backgrounds),
-            expression_ids=set(pack.expressions),
+            expression_ids=set(pack.expressions) - {"busy"},
             previous_bg=self.current_bg,
             previous_expression=self.current_expression,
         )
@@ -239,6 +293,7 @@ class AppState:
             return
         self.turn_handle = None
         self.busy = False
+        self._sync_stage_paths()
         self.last_assistant_text = f"Error: {error}"
         self.last_assistant_choices = []
         self.status = "Request failed"
@@ -250,6 +305,7 @@ class AppState:
             return
         self.busy = False
         self.turn_handle = None
+        self._sync_stage_paths()
         if self.status not in ("Request failed",) and not self.status.startswith(
             "Warning"
         ):
@@ -285,7 +341,11 @@ class AppState:
             self.sprite_path = ""
             return
         self.bg_path = pack.backgrounds.get(self.current_bg, "")
-        self.sprite_path = pack.expressions.get(self.current_expression, "")
+        # `busy` is UI-only while a turn is in flight; LLM stage ids stay elsewhere.
+        if self.busy and "busy" in pack.expressions:
+            self.sprite_path = pack.expressions["busy"]
+        else:
+            self.sprite_path = pack.expressions.get(self.current_expression, "")
 
     def _refresh(self) -> None:
         if renpy is not None:

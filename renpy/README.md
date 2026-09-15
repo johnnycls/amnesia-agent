@@ -28,15 +28,15 @@ lifecycle code lives in `process/` so it does not collide with that directory.
 2. **Workspace Select** — recent list (open / delete); Import and Create use an OS
    folder picker (no free-text path).
    - Import: pick folder → `GET /v1/workspace/check` → if valid `setup-or-repair`; if not,
-     choose setup-or-repair or create-or-reset (soft reset).
-   - Create: pick folder → soft `create-or-reset`.
+     choose setup-or-repair or create-or-reset (hard wipe).
+   - Create: pick folder → Confirm → `POST /v1/workspace/create` (empty-only; errors if non-empty).
    - On success: bump `recent_workspaces[].last_opened_at`, persist Ren'Py config, enter Main.
 3. **Auto-enter Main** when `recent_workspaces[0]` exists and check passes (then setup-or-repair).
 4. **Main** — Back; Workspace Settings; History; Config. Shows **only the last assistant
    message**. Choice buttons when present. Input disabled while busy. `POST /v1/turn` with
    `workspace_path` and default `answer_with_choices` `response_format`. Cancel disconnects SSE.
 5. **Workspace Settings** — system prompt / memory read+update. Reset prompt writes the
-   **packaged Ren'Py default string** (not a server soft-reset endpoint). No history here.
+   **packaged Ren'Py default string** (not a server create-or-reset endpoint). No history here.
 6. **History** — list dates, read one day as `role: msg time` lines, delete one day via
    `PUT /v1/workspace/history` with empty `messages` (removes that day's JSONL), clear all via
    `POST /v1/workspace/history/reset`. Always pass `workspace_path`.

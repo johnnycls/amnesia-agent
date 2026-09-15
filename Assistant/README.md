@@ -62,6 +62,11 @@ sprites and backgrounds are generated illustrations matching this direction (not
 
 - Layers: background, character sprite, message text, choice buttons, input.
 - Input always visible; **Send** when idle, **Cancel** when busy.
+- While `app.busy`, Main shows the character's **`busy`** sprite (UI-only). The LLM
+  still emits `expression` among `neutral` / `smile` / `think` only.
+- **Reset** (Main / Character Select): Confirm → `POST /v1/workspace/create-or-reset`
+  on the default workspace (hard wipe), re-PUT the current character `prompt.md`,
+  clear message/choices, restore default bg/expression.
 - Cancel closes the SSE connection; busy clears on complete (same contract as renpy).
 - `POST /v1/turn` with `response_format` `assistant_stage`:
   `message`, `choices`, `bg`, `expression`.

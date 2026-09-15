@@ -4,10 +4,23 @@
   "default_bg": "room",
   "default_expression": "neutral",
   "palette": {
-    "skin": ["#ffe4eb", "#e6b9cd"],
-    "hair": ["#965fd7", "#5f32a0", "#c8a5f5"],
-    "eyes": ["#46d2dc", "#236e82"],
-    "cloth": ["#734baf", "#462878"],
+    "skin": [
+      "#ffe4eb",
+      "#e6b9cd"
+    ],
+    "hair": [
+      "#965fd7",
+      "#5f32a0",
+      "#c8a5f5"
+    ],
+    "eyes": [
+      "#46d2dc",
+      "#236e82"
+    ],
+    "cloth": [
+      "#734baf",
+      "#462878"
+    ],
     "accent": "#37d2c8",
     "notes": "Cool violet/teal; 5 color groups; flat blocks, no outlines, two-step shade."
   },
@@ -18,6 +31,7 @@
   "expressions": {
     "neutral": "sprites/neutral.png",
     "smile": "sprites/smile.png",
-    "think": "sprites/think.png"
+    "think": "sprites/think.png",
+    "busy": "sprites/busy.png"
   }
 }

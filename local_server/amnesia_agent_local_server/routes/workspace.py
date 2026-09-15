@@ -49,6 +49,16 @@ def setup_or_repair_workspace(
     return {"ok": True}
 
 
+@router.post("/create")
+def create_workspace(
+    request: Request,
+    body: WorkspacePathBody | None = None,
+) -> dict[str, bool]:
+    path = body.workspace_path if body is not None else None
+    request.app.state.session.create_workspace(path)
+    return {"ok": True}
+
+
 @router.post("/create-or-reset")
 def create_or_reset_workspace(
     request: Request,

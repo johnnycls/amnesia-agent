@@ -3,6 +3,8 @@ screen character_select_page():
         spacing 18
         text "Choose a character" size 28 bold True
         text "Default workspace ~/.amnesia-agent · local server config unchanged" style "app_small"
+        if app.character is not None:
+            textbutton "Reset default workspace" action Function(app.reset_default_workspace) sensitive (not app.busy)
 
         hbox:
             spacing 28
