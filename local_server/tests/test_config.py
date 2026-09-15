@@ -342,6 +342,14 @@ class WorkspaceApiTests(unittest.TestCase):
             setup.assert_called_once_with(None)
 
             with patch(
+                "amnesia_agent_local_server.session.KernelSession.create_workspace"
+            ) as create:
+                response = client.post("/v1/workspace/create")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json(), {"ok": True})
+            create.assert_called_once_with(None)
+
+            with patch(
                 "amnesia_agent_local_server.session.KernelSession.create_or_reset_workspace"
             ) as reset:
                 response = client.post("/v1/workspace/create-or-reset")
@@ -378,6 +386,15 @@ class WorkspaceApiTests(unittest.TestCase):
             setup.assert_called_once_with(custom)
 
             with patch(
+                "amnesia_agent_local_server.session.KernelSession.create_workspace"
+            ) as create:
+                client.post(
+                    "/v1/workspace/create",
+                    json={"workspace_path": custom},
+                )
+            create.assert_called_once_with(custom)
+
+            with patch(
                 "amnesia_agent_local_server.session.KernelSession.create_or_reset_workspace"
             ) as reset:
                 client.post(
@@ -385,6 +402,22 @@ class WorkspaceApiTests(unittest.TestCase):
                     json={"workspace_path": custom},
                 )
             reset.assert_called_once_with(custom)
+
+    def test_create_workspace_nonempty_returns_400(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = ConfigStore(directory)
+            ws = Path(directory) / "occupied"
+            ws.mkdir()
+            (ws / "notes.txt").write_text("stay", encoding="utf-8")
+            client = TestClient(create_app(store))
+            response = client.post(
+                "/v1/workspace/create",
+                json={"workspace_path": str(ws)},
+            )
+            self.assertEqual(response.status_code, 400)
+            detail = response.json().get("detail", "")
+            self.assertIn("not empty", detail.lower())
+            self.assertEqual((ws / "notes.txt").read_text(encoding="utf-8"), "stay")
 
     def test_workspace_get_empty_query_is_none(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

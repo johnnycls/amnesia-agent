@@ -25,7 +25,7 @@ keeps re-deciding as conditions change:
 - **Its own capabilities** — nothing is impossible with bash: install packages, call APIs, compile code, write scripts. Whatever ability the agent lacks, it builds itself into its workspace, not into this code.
 - **Its own workspace** — everything it learns, builds, and improves lives in `~/.amnesia-agent/`. Task after task, the workspace grows while the program running it stays exactly the same.
 
-An agent doesn't need dozens of bespoke tools; it needs **one tool that can do everything**, and the freedom to use it. The harness's only jobs are relaying messages, executing bash, failing loudly when something breaks — and it does them as a **headless kernel**. The Ren'Py frontend is the shipping UI; you can build others (web UIs, bots, voice agents) on the same core.
+An agent doesn't need dozens of bespoke tools; it needs **one tool that can do everything**, and the freedom to use it. The harness's only jobs are relaying messages, executing bash, failing loudly when something breaks — and it does them as a **headless kernel**. The shipping UI is the Ren'Py `Assistant/` app; you can build others (web UIs, bots, voice agents) on the same core.
 
 ## Quick start
 
@@ -35,10 +35,10 @@ pip install ./local_server
 amnesia-agent-local-server
 ```
 
-Open the Ren'Py project in [`renpy/`](renpy/) with the Ren'Py launcher. The game
-starts the local server and streams agent events over HTTP. Set your model and
-API key in `~/.amnesia-agent-local-server/config.json` (or via the in-game
-settings screen).
+Open the Ren'Py project in [`Assistant/`](Assistant/) with the Ren'Py launcher.
+The app starts the local server and streams agent events over HTTP. Configure
+model and API key in the in-app Config screen (also persisted under
+`~/.amnesia-agent-local-server/` / `~/.amnesia-agent-assistant/`).
 
 ## Packages
 
@@ -49,7 +49,7 @@ plus one frontend:
 |---|---|
 | [`kernel/`](kernel/) | Frontend-agnostic async agent kernel — the core. |
 | [`local_server/`](local_server/) | Reusable loopback FastAPI server for desktop frontends. |
-| [`renpy/`](renpy/) | Ren'Py client that launches the local server and streams agent events. |
+| [`Assistant/`](Assistant/) | Ren'Py character-stage client (locked boot: Config/Character → Main; default workspace). |
 
 ## Project structure
 
@@ -59,12 +59,12 @@ amnesia-agent/
 │   └── amnesia_agent_kernel/
 ├── local_server/            # amnesia-agent-local-server (pip package)
 │   └── amnesia_agent_local_server/
-├── renpy/                   # Ren'Py game project (only shipping frontend)
+├── Assistant/               # Ren'Py character-stage frontend
 │   └── game/
 └── .github/workflows/ci.yml
 ```
 
-The **kernel** is the core. The **local server** depends on it. The **Ren'Py**
+The **kernel** is the core. The **local server** depends on it. The **Assistant**
 frontend talks to the local server over HTTP, streaming agent events via
 Server-Sent Events.
 
@@ -88,7 +88,7 @@ Run tests:
 ```text
 cd kernel && python -m unittest discover
 cd local_server && python -m unittest discover
-cd renpy && python -m unittest discover
+cd Assistant && python -m unittest discover
 ```
 
 See each sub-project's README for specific setup instructions.

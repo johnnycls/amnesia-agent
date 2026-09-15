@@ -132,6 +132,10 @@ class SessionManager:
         self.require_idle_for_path(workspace_path, "setup or repair workspace")
         KernelSession.setup_or_repair_workspace(resolve_request_workspace_path(workspace_path))
 
+    def create_workspace(self, workspace_path: str | None = None) -> None:
+        self.require_idle_for_path(workspace_path, "create workspace")
+        KernelSession.create_workspace(resolve_request_workspace_path(workspace_path))
+
     def create_or_reset_workspace(self, workspace_path: str | None = None) -> None:
         self.require_idle_for_path(workspace_path, "create or reset workspace")
         KernelSession.create_or_reset_workspace(resolve_request_workspace_path(workspace_path))
