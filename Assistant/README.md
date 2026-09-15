@@ -51,16 +51,12 @@ Each pack lives under `game/characters/<id>/`:
 | `bg/*.png` | background ids |
 | `sprites/*.png` | expression ids |
 
-### Art direction (v1 placeholders)
+### Art direction
 
-Color-block moe style: limited palette (3–5 groups), no lineart, two-step shading,
-clear light/dark contrast, exaggerated foreshortening. Assets are procedural
-placeholders (PIL), not production illustration.
+Color-block moe style: limited palette (3–5 groups), no lineart, two-step shadows,
+extreme foreshortening / dynamic poses, ~6.5–7.5 head proportions. Bundled Aurora/Kai
+sprites and backgrounds are generated illustrations matching this direction (not PIL solids).
 
-- **Aurora** — cool violet / teal / lavender skin
-- **Kai** — warm auburn / forest green / amber
-
-Palettes are documented in each `character.json` under `"palette"`.
 
 ## Main behaviour
 
