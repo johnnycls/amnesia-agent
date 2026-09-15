@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final, cast
@@ -71,13 +72,17 @@ def _resolve_root(root: str | os.PathLike[str] | None) -> Path:
 
 
 def _atomic_write_json(path: Path, raw: dict[str, Any]) -> None:
-    """Atomically write JSON then ``chmod`` the result to ``0o600``."""
+    """Atomically write JSON then tighten file mode (``0o600`` on Unix)."""
     temporary = path.with_suffix(".tmp")
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary.write_text(json.dumps(raw, indent=2) + "\n", encoding="utf-8")
         temporary.replace(path)
-        os.chmod(path, 0o600)
+        if os.name == "nt":
+            # NTFS ignores full POSIX modes; best-effort clear read-only only.
+            os.chmod(path, stat.S_IREAD | stat.S_IWRITE)
+        else:
+            os.chmod(path, 0o600)
     except OSError as error:
         try:
             temporary.unlink(missing_ok=True)
