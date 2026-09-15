@@ -1,8 +1,6 @@
 # Amnesia Agent Ren'Py frontend entry.
 
 default input_text = ""
-default import_path = ""
-default create_path = ""
 default settings_model = ""
 default settings_api_key = ""
 default settings_base_url = ""

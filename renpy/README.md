@@ -25,10 +25,11 @@ lifecycle code lives in `process/` so it does not collide with that directory.
 ## Pages / flow
 
 1. **Loading** — load Ren'Py config (fail loud if corrupt); spawn local_server; poll `/v1/health`.
-2. **Workspace Select** — recent list (open / delete); import path; create path.
-   - Open: `GET /v1/workspace/check` → if valid `setup-or-repair`; if not, choose setup-or-repair
-     or create-or-reset.
-   - Create: `create-or-reset`.
+2. **Workspace Select** — recent list (open / delete); Import and Create use an OS
+   folder picker (no free-text path).
+   - Import: pick folder → `GET /v1/workspace/check` → if valid `setup-or-repair`; if not,
+     choose setup-or-repair or create-or-reset (soft reset).
+   - Create: pick folder → soft `create-or-reset`.
    - On success: bump `recent_workspaces[].last_opened_at`, persist Ren'Py config, enter Main.
 3. **Auto-enter Main** when `recent_workspaces[0]` exists and check passes (then setup-or-repair).
 4. **Main** — Back; Workspace Settings; History; Config. Shows **only the last assistant

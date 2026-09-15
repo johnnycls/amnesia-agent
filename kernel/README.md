@@ -138,10 +138,12 @@ resolves to `~/.amnesia-agent`):
 2. `KernelSession.setup_or_repair_workspace(root=None) -> None` — mkdir parents;
    create empty prompt/memory files if missing. Does **not** wipe existing content
    and does **not** delete `history/`.
-3. `KernelSession.create_or_reset_workspace(root=None) -> None` — if `root` exists
-   and is a directory, `shutil.rmtree` it; if missing, treat as clear; if it
-   exists and is not a directory, raise `WorkspaceError`; then run setup/repair
-   to recreate empty prompt/memory files.
+3. `KernelSession.create_or_reset_workspace(root=None) -> None` — soft reset: if
+   `root` is missing, mkdir parents; if it exists as a directory, keep it (do
+   **not** `rmtree` the root); if it exists and is not a directory, raise
+   `WorkspaceError`. Always overwrite `system_prompt.md` and `memory.md` with
+   empty strings, and clear `history/` (same rules as `reset_history`). Leave
+   all other files/dirs under the workspace untouched.
 
 Suggested frontend flow: **open → `check_workspace`; if ok, construct
 `KernelSession`; if not, let the user choose repair (`setup_or_repair_workspace`)

@@ -79,8 +79,6 @@ class AppState:
         self.settings_language = "english"
         self.settings_api_key_set = False
 
-        self.import_path = ""
-        self.create_path = ""
         self.input_text = ""
 
     # --- bootstrap / loading -------------------------------------------------
@@ -175,6 +173,52 @@ class AppState:
         except ConfigError as error:
             self.status = localize("Config error: {error}", error=error)
         self._refresh()
+
+    @staticmethod
+    def _ask_directory() -> str:
+        """Native OS folder picker. Returns "" when cancelled."""
+        import tkinter as tk
+        from tkinter import filedialog
+
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            try:
+                root.attributes("-topmost", True)
+            except tk.TclError:
+                pass
+            selected = filedialog.askdirectory()
+        finally:
+            root.destroy()
+        if not selected:
+            return ""
+        return str(selected).strip()
+
+    def pick_import_workspace(self) -> None:
+        """OS folder picker → open_workspace. Cancel is a no-op."""
+        if self.busy:
+            return
+
+        def work() -> None:
+            path = self._ask_directory()
+            if not path:
+                return
+            invoke(self.open_workspace, path)
+
+        threading.Thread(target=work, name="amnesia-pick-import", daemon=True).start()
+
+    def pick_create_workspace(self) -> None:
+        """OS folder picker → create_workspace (soft create-or-reset). Cancel is a no-op."""
+        if self.busy:
+            return
+
+        def work() -> None:
+            path = self._ask_directory()
+            if not path:
+                return
+            invoke(self.create_workspace, path)
+
+        threading.Thread(target=work, name="amnesia-pick-create", daemon=True).start()
 
     def open_workspace(self, path: str) -> None:
         path = path.strip()

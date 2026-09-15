@@ -35,8 +35,11 @@ translate schinese strings:
     old "Cannot save config while the agent is busy."
     new "智能体忙碌时无法保存配置。"
 
-    old "Choose setup or repair (keep files) or create or reset (wipe)."
-    new "选择设置或修复（保留文件），或创建或重置（清空）。"
+    old "Choose a folder"
+    new "选择文件夹"
+
+    old "Choose setup or repair (keep files) or create or reset (soft reset: empty prompt/memory, clear history; other files kept)."
+    new "选择设置或修复（保留文件），或创建或重置（软重置：清空提示词/记忆、清除历史；其他文件保留）。"
 
     old "Clear all history"
     new "清除全部历史记录"
@@ -58,9 +61,6 @@ translate schinese strings:
 
     old "Create or reset"
     new "创建或重置"
-
-    old "Create workspace path"
-    new "创建工作区路径"
 
     old "Creating workspace..."
     new "正在创建工作区……"
@@ -86,8 +86,8 @@ translate schinese strings:
     old "History reset"
     new "历史记录已重置"
 
-    old "Import workspace path"
-    new "导入工作区路径"
+    old "Import"
+    new "导入"
 
     old "Input disabled while agent is busy."
     new "智能体忙碌时输入已禁用。"
@@ -124,9 +124,6 @@ translate schinese strings:
 
     old "No recent workspaces"
     new "暂无最近工作区"
-
-    old "Open"
-    new "打开"
 
     old "Opening workspace..."
     new "正在打开工作区……"
@@ -245,8 +242,8 @@ translate schinese strings:
     old "Unknown page"
     new "未知页面"
 
-    old "Wipe and recreate this workspace?"
-    new "清空并重建此工作区？"
+    old "Soft-reset this workspace? Prompt and memory will be emptied and history cleared; other files stay."
+    new "软重置此工作区？提示词与记忆将被清空，历史将被清除；其他文件保留。"
 
     old "Workspace Select"
     new "选择工作区"
@@ -268,7 +265,6 @@ translate schinese strings:
 
     old "Workspace:"
     new "工作区："
-
 
 translate tchinese strings:
     old "API key (leave blank to keep the current key)"
@@ -304,8 +300,11 @@ translate tchinese strings:
     old "Cannot save config while the agent is busy."
     new "智能體忙碌時無法儲存設定。"
 
-    old "Choose setup or repair (keep files) or create or reset (wipe)."
-    new "選擇設置或修復（保留檔案），或建立或重設（清空）。"
+    old "Choose a folder"
+    new "選擇資料夾"
+
+    old "Choose setup or repair (keep files) or create or reset (soft reset: empty prompt/memory, clear history; other files kept)."
+    new "選擇設定或修復（保留檔案），或建立或重設（軟重設：清空提示詞/記憶、清除歷史；其他檔案保留）。"
 
     old "Clear all history"
     new "清除所有歷史記錄"
@@ -327,9 +326,6 @@ translate tchinese strings:
 
     old "Create or reset"
     new "建立或重設"
-
-    old "Create workspace path"
-    new "建立工作區路徑"
 
     old "Creating workspace..."
     new "正在建立工作區……"
@@ -355,8 +351,8 @@ translate tchinese strings:
     old "History reset"
     new "歷史記錄已重設"
 
-    old "Import workspace path"
-    new "匯入工作區路徑"
+    old "Import"
+    new "匯入"
 
     old "Input disabled while agent is busy."
     new "智能體忙碌時輸入已停用。"
@@ -393,9 +389,6 @@ translate tchinese strings:
 
     old "No recent workspaces"
     new "暫無最近工作區"
-
-    old "Open"
-    new "開啟"
 
     old "Opening workspace..."
     new "正在開啟工作區……"
@@ -514,8 +507,8 @@ translate tchinese strings:
     old "Unknown page"
     new "未知頁面"
 
-    old "Wipe and recreate this workspace?"
-    new "清空並重建此工作區？"
+    old "Soft-reset this workspace? Prompt and memory will be emptied and history cleared; other files stay."
+    new "軟重設此工作區？提示詞與記憶將被清空，歷史將被清除；其他檔案保留。"
 
     old "Workspace Select"
     new "選擇工作區"
@@ -537,7 +530,6 @@ translate tchinese strings:
 
     old "Workspace:"
     new "工作區："
-
 
 translate japanese strings:
     old "API key (leave blank to keep the current key)"
@@ -573,8 +565,11 @@ translate japanese strings:
     old "Cannot save config while the agent is busy."
     new "エージェント処理中は設定を保存できません。"
 
-    old "Choose setup or repair (keep files) or create or reset (wipe)."
-    new "セットアップまたは修復（ファイルを保持）、あるいは作成またはリセット（消去）を選んでください。"
+    old "Choose a folder"
+    new "フォルダを選択"
+
+    old "Choose setup or repair (keep files) or create or reset (soft reset: empty prompt/memory, clear history; other files kept)."
+    new "セットアップまたは修復（ファイルを保持）、あるいは作成またはリセット（ソフトリセット：プロンプト/メモリを空にし、履歴を削除。他のファイルは保持）を選んでください。"
 
     old "Clear all history"
     new "履歴をすべて消去"
@@ -596,9 +591,6 @@ translate japanese strings:
 
     old "Create or reset"
     new "作成またはリセット"
-
-    old "Create workspace path"
-    new "ワークスペースパスを作成"
 
     old "Creating workspace..."
     new "ワークスペースを作成しています……"
@@ -624,8 +616,8 @@ translate japanese strings:
     old "History reset"
     new "履歴をリセットしました"
 
-    old "Import workspace path"
-    new "ワークスペースパスを読み込む"
+    old "Import"
+    new "インポート"
 
     old "Input disabled while agent is busy."
     new "エージェント処理中は入力できません。"
@@ -662,9 +654,6 @@ translate japanese strings:
 
     old "No recent workspaces"
     new "最近のワークスペースはありません"
-
-    old "Open"
-    new "開く"
 
     old "Opening workspace..."
     new "ワークスペースを開いています……"
@@ -783,8 +772,8 @@ translate japanese strings:
     old "Unknown page"
     new "不明なページ"
 
-    old "Wipe and recreate this workspace?"
-    new "このワークスペースを消去して再作成しますか？"
+    old "Soft-reset this workspace? Prompt and memory will be emptied and history cleared; other files stay."
+    new "このワークスペースをソフトリセットしますか？プロンプトとメモリは空になり、履歴は削除されます。他のファイルはそのままです。"
 
     old "Workspace Select"
     new "ワークスペース選択"
@@ -806,7 +795,6 @@ translate japanese strings:
 
     old "Workspace:"
     new "ワークスペース："
-
 
 translate korean strings:
     old "API key (leave blank to keep the current key)"
@@ -842,8 +830,11 @@ translate korean strings:
     old "Cannot save config while the agent is busy."
     new "에이전트가 바쁠 때는 구성을 저장할 수 없습니다."
 
-    old "Choose setup or repair (keep files) or create or reset (wipe)."
-    new "설정 또는 복구(파일 유지), 또는 만들기 또는 초기화(삭제)를 선택하세요."
+    old "Choose a folder"
+    new "폴더 선택"
+
+    old "Choose setup or repair (keep files) or create or reset (soft reset: empty prompt/memory, clear history; other files kept)."
+    new "설정 또는 복구(파일 유지), 또는 만들기 또는 초기화(소프트 리셋: 프롬프트/메모리 비우기, 기록 삭제; 다른 파일은 유지)를 선택하세요."
 
     old "Clear all history"
     new "모든 기록 삭제"
@@ -865,9 +856,6 @@ translate korean strings:
 
     old "Create or reset"
     new "만들기 또는 초기화"
-
-    old "Create workspace path"
-    new "작업 공간 경로 만들기"
 
     old "Creating workspace..."
     new "작업 공간을 만드는 중..."
@@ -893,8 +881,8 @@ translate korean strings:
     old "History reset"
     new "기록이 초기화되었습니다"
 
-    old "Import workspace path"
-    new "작업 공간 경로 가져오기"
+    old "Import"
+    new "가져오기"
 
     old "Input disabled while agent is busy."
     new "에이전트가 바쁠 때는 입력을 사용할 수 없습니다."
@@ -931,9 +919,6 @@ translate korean strings:
 
     old "No recent workspaces"
     new "최근 작업 공간이 없습니다"
-
-    old "Open"
-    new "열기"
 
     old "Opening workspace..."
     new "작업 공간을 여는 중..."
@@ -1052,8 +1037,8 @@ translate korean strings:
     old "Unknown page"
     new "알 수 없는 페이지"
 
-    old "Wipe and recreate this workspace?"
-    new "이 작업 공간을 지우고 다시 만들까요?"
+    old "Soft-reset this workspace? Prompt and memory will be emptied and history cleared; other files stay."
+    new "이 작업 공간을 소프트 리셋할까요? 프롬프트와 메모리는 비워지고 기록이 삭제됩니다. 다른 파일은 유지됩니다."
 
     old "Workspace Select"
     new "작업 공간 선택"
