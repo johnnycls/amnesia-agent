@@ -1,0 +1,23 @@
+# Assistant Ren'Py frontend entry.
+
+default input_text = ""
+
+init python:
+    from state.app import AppState
+
+    app = AppState()
+
+    def quit_action():
+        if app.busy:
+            app.status = "Cannot quit while the agent is busy."
+            renpy.restart_interaction()
+            return
+        app.quit_app()
+
+    config.quit_action = Function(quit_action)
+
+label start:
+    $ app.start_loading()
+    call screen app_shell
+    $ app.stop()
+    return

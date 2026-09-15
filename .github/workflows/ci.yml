@@ -20,6 +20,7 @@ jobs:
       kernel: ${{ steps.select.outputs.kernel }}
       local_server: ${{ steps.select.outputs.local_server }}
       renpy: ${{ steps.select.outputs.renpy }}
+      assistant: ${{ steps.select.outputs.assistant }}
       workflows: ${{ steps.select.outputs.workflows }}
     steps:
       - uses: actions/checkout@v7
@@ -34,6 +35,8 @@ jobs:
               - 'local_server/**'
             renpy:
               - 'renpy/**'
+            assistant:
+              - 'Assistant/**'
             workflows:
               - '.github/workflows/**'
       - id: select
@@ -55,6 +58,7 @@ jobs:
             set_out kernel true
             set_out local_server true
             set_out renpy true
+            set_out assistant true
             set_out workflows true
             exit 0
           fi
@@ -62,6 +66,7 @@ jobs:
           kernel="${{ steps.filter.outputs.kernel }}"
           local_server="${{ steps.filter.outputs.local_server }}"
           renpy="${{ steps.filter.outputs.renpy }}"
+          assistant="${{ steps.filter.outputs.assistant }}"
           workflows="${{ steps.filter.outputs.workflows }}"
 
           # Workflow edits should still validate kernel CI paths at minimum.
@@ -72,6 +77,7 @@ jobs:
           set_out kernel "$kernel"
           set_out local_server "$local_server"
           set_out renpy "$renpy"
+          set_out assistant "$assistant"
           set_out workflows "$workflows"
 
   kernel-lint:
@@ -156,6 +162,23 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: python -m pip install ./kernel ./local_server
       - working-directory: renpy
+        run: python -m unittest discover -t . -s tests -v
+
+  assistant-test:
+    needs: changes
+    if: needs.changes.outputs.assistant == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.10", "3.14"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+      - working-directory: Assistant
         run: python -m unittest discover -t . -s tests -v
 
   kernel-build:

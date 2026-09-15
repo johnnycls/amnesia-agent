@@ -1,0 +1,23 @@
+{
+  "id": "aurora",
+  "display_name": "Aurora",
+  "default_bg": "room",
+  "default_expression": "neutral",
+  "palette": {
+    "skin": ["#ffe4eb", "#e6b9cd"],
+    "hair": ["#965fd7", "#5f32a0", "#c8a5f5"],
+    "eyes": ["#46d2dc", "#236e82"],
+    "cloth": ["#734baf", "#462878"],
+    "accent": "#37d2c8",
+    "notes": "Cool violet/teal; 5 color groups; flat blocks, no outlines, two-step shade."
+  },
+  "backgrounds": {
+    "room": "bg/room.png",
+    "outdoor": "bg/outdoor.png"
+  },
+  "expressions": {
+    "neutral": "sprites/neutral.png",
+    "smile": "sprites/smile.png",
+    "think": "sprites/think.png"
+  }
+}
