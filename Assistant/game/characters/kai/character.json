@@ -3,27 +3,6 @@
   "display_name": "Kai",
   "default_bg": "room",
   "default_expression": "neutral",
-  "palette": {
-    "skin": [
-      "#fadcc3",
-      "#dcaa8c"
-    ],
-    "hair": [
-      "#aa552d",
-      "#732d19",
-      "#dc965f"
-    ],
-    "eyes": [
-      "#41965f",
-      "#194b2d"
-    ],
-    "cloth": [
-      "#2d7355",
-      "#1c4632"
-    ],
-    "accent": "#eba52d",
-    "notes": "Warm amber/forest; 5 color groups; flat blocks, no outlines, two-step shade."
-  },
   "backgrounds": {
     "room": "bg/room.png",
     "outdoor": "bg/outdoor.png"

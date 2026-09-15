@@ -62,7 +62,7 @@ Each pack lives under `game/characters/<id>/`:
 
 | File | Role |
 |---|---|
-| `character.json` | id, display name, default bg/expression, asset maps, palette notes |
+| `character.json` | id, display name, default bg/expression, asset maps |
 | `prompt.md` | system prompt written on select via `PUT /v1/workspace/system-prompt` |
 | `bg/*.png` | background ids |
 | `sprites/*.png` | expression ids |
