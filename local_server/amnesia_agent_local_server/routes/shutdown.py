@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request
 
-router = APIRouter(tags=["shutdown"])
+# Empty path "" (not "/") so mount is /v1/shutdown without a trailing slash.
+router = APIRouter(prefix="/shutdown", tags=["shutdown"])
 
 
-@router.post("/shutdown")
+@router.post("")
 async def shutdown(request: Request) -> dict[str, bool]:
     server = request.app.state.uvicorn_server
     if server is None:

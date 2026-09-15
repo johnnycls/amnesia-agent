@@ -10,21 +10,21 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from amnesia_agent_local_server.config import ConfigStore
+from amnesia_agent_local_server.constants import API_PREFIX
 from amnesia_agent_local_server.routes import config, health, shutdown, turn, workspace
 from amnesia_agent_local_server.session import SessionManager, TurnBusyError
-
-API_PREFIX = "/v1"
 
 
 def create_app(
     config_store: ConfigStore | None = None,
     instance_id: str | None = None,
 ) -> FastAPI:
-    """Create an application with one ``SessionManager`` and ``/v1`` routers."""
+    """Create an application with one ``SessionManager`` and versioned routers."""
     app = FastAPI(title="Amnesia Agent Local Server", version="0.0.0-alpha.0")
     app.state.session = SessionManager(config_store, instance_id)
     app.state.uvicorn_server = None
 
+    # Version prefix only; each route module owns its resource prefix.
     app.include_router(health.router, prefix=API_PREFIX)
     app.include_router(config.router, prefix=API_PREFIX)
     app.include_router(workspace.router, prefix=API_PREFIX)

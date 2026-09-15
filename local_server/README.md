@@ -35,10 +35,11 @@ loopback and run it only on a trusted machine.
 
 ```text
 amnesia_agent_local_server/
+├── constants.py    # API_VERSION / API_PREFIX (single source of truth)
 ├── config.py       # defaults constants + ConfigStore persistence
 ├── session.py      # SessionManager: fresh KernelSession per turn, path-keyed locks
 ├── sse.py          # str | AllMessageValues → SSE envelopes (fail-loud)
-├── routes/         # thin routers: health, config, workspace, turn, shutdown
+├── routes/         # thin routers: each owns prefix="/<stem>"
 ├── app.py          # FastAPI assembly + exception → HTTP JSON mapping
 └── __main__.py     # CLI entry (loopback bind; wires uvicorn for /shutdown)
 ```
@@ -65,8 +66,12 @@ Public responses mask the API key: `api_key` is always `null` and
 ## HTTP API (`/v1`)
 
 Path/method names follow `KernelSession` (kebab-case for multi-word methods).
-There is no parallel synonym vocabulary. `/v1` is applied once at app include
-time; workspace/config routers own their `/workspace` and `/config` prefixes.
+There is no parallel synonym vocabulary. `API_VERSION` / `API_PREFIX` live in
+`constants.py`; app include uses **only** the version prefix (`/v1`). Each route
+module owns `APIRouter(prefix="/<stem>")` matching its filename (`health`,
+`config`, `workspace`, `turn`, `shutdown`). Single-endpoint routers register the
+handler on path `""` (not `"/"`) so clients keep `/v1/health`, `/v1/turn`, and
+`/v1/shutdown` **without** a trailing slash.
 
 ### Health
 

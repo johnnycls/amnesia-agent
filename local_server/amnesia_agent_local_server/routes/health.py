@@ -6,9 +6,10 @@ from typing import Any
 
 from fastapi import APIRouter, Request
 
-router = APIRouter(tags=["health"])
+# Empty path "" (not "/") so mount is /v1/health without a trailing slash.
+router = APIRouter(prefix="/health", tags=["health"])
 
 
-@router.get("/health")
+@router.get("")
 def health(request: Request) -> dict[str, Any]:
     return request.app.state.session.health()  # type: ignore[no-any-return]
