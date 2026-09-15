@@ -14,6 +14,7 @@ from amnesia_agent_local_server.config import (
     ConfigStore,
     LoadedConfig,
     public_config,
+    reject_provider_params_secrets,
     resolve_request_workspace_path,
 )
 from amnesia_agent_local_server.constants import API_VERSION
@@ -249,6 +250,7 @@ def _merge_config(current: LoadedConfig, fields: Mapping[str, Any]) -> LoadedCon
 
     if "provider_params" in fields and fields["provider_params"] is not None:
         provider_params = fields["provider_params"]
+        reject_provider_params_secrets(provider_params)
     else:
         provider_params = current.provider.provider_params
 

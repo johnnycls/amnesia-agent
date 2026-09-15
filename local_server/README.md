@@ -28,6 +28,12 @@ Binds to `127.0.0.1:8765` by default:
 amnesia-agent-local-server --host 127.0.0.1 --port 8765
 ```
 
+**Local-trust / loopback:** this server has **no** instance or bearer auth. The
+CLI refuses non-loopback bind hosts (`0.0.0.0`, `::`, LAN IPs, …) unless you
+pass `--allow-remote`. With `--allow-remote` it starts but prints a stderr
+warning that the process is unsafe off loopback. Loopback hosts: `127.0.0.1`,
+`localhost`, `::1` (and other addresses in the loopback ranges).
+
 This server exposes the kernel's unrestricted local shell tool. Keep it on
 loopback and run it only on a trusted machine.
 
@@ -61,8 +67,20 @@ each request (see Workspace / Turn).
 - Legacy `workspace_path` keys in `config.json` are **rejected** as unexpected
   properties (remove the key and pass the path per request instead).
 
-Public responses mask the API key: `api_key` is always `null` and
-`api_key_set: boolean` indicates whether a key is stored.
+Public responses redact secrets:
+
+- Top-level `api_key` is always `null`; `api_key_set: boolean` indicates whether
+  a key is stored.
+- `provider_params` is deep-redacted via `redact_provider_params`: credential-
+  shaped keys (`api_key`, `api_base`, `token`, `secret`, `password`,
+  `authorization`, `access_token`, `refresh_token`; case-insensitive) and all
+  nested `extra_headers` values become `"***"`. Safe knobs such as
+  `temperature` pass through unchanged.
+
+`PUT /v1/config` **rejects** (HTTP **400**) `provider_params` that contain those
+credential keys (including nested paths such as `extra_headers.Authorization`) —
+store secrets in top-level `api_key` / `base_url` instead, not in params (Ren'Py
+shows `provider_params` in the Config form).
 
 ## HTTP API (`/v1`)
 
@@ -89,8 +107,9 @@ can detect stale servers on a contested port.
 ### Configuration
 
 ```text
-GET  /v1/config           → public config (api_key masked)
-PUT  /v1/config           → partial update (any subset of keys)
+GET  /v1/config           → public config (api_key masked; provider_params redacted)
+PUT  /v1/config           → partial update (any subset of keys; credential
+                            provider_params → 400)
 POST /v1/config/reset     → rewrite defaults from constants
 ```
 

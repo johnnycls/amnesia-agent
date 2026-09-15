@@ -217,15 +217,138 @@ def _validate_provider(provider: ProviderConfig) -> None:
     validate_provider_config(provider)
 
 
+# Credential-shaped keys rejected from provider_params on write and redacted on
+# public reads. Prefer top-level ``api_key`` / ``base_url`` for secrets.
+_CREDENTIAL_PARAM_KEYS: Final[frozenset[str]] = frozenset(
+    {
+        "api_key",
+        "api_base",
+        "token",
+        "secret",
+        "password",
+        "authorization",
+        "access_token",
+        "refresh_token",
+    }
+)
+REDACTED_SENTINEL: Final[str] = "***"
+
+
+def _normalize_param_key(key: str) -> str:
+    return key.strip().lower().replace("-", "_")
+
+
+def _is_credential_param_key(key: str) -> bool:
+    return _normalize_param_key(key) in _CREDENTIAL_PARAM_KEYS
+
+
+def redact_provider_params(params: dict[str, Any]) -> dict[str, Any]:
+    """Deep-copy *params*, replacing credential-shaped values with ``***``.
+
+    Credential keys (case-insensitive, ``-``/``_`` normalized): ``api_key``,
+    ``api_base``, ``token``, ``secret``, ``password``, ``authorization``,
+    ``access_token``, ``refresh_token``. Nested ``extra_headers`` values are
+    always replaced with the sentinel (header values may carry Bearer tokens).
+    Other nested dicts are walked recursively; lists are copied element-wise.
+    Non-dict top-level input is returned as an empty dict.
+    """
+    if not isinstance(params, dict):
+        return {}
+    return _redact_mapping(params, under_extra_headers=False)
+
+
+def _redact_mapping(params: dict[str, Any], *, under_extra_headers: bool) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for key, value in params.items():
+        key_str = str(key)
+        if under_extra_headers or _is_credential_param_key(key_str):
+            out[key_str] = REDACTED_SENTINEL
+            continue
+        if _normalize_param_key(key_str) == "extra_headers" and isinstance(value, dict):
+            out[key_str] = _redact_mapping(value, under_extra_headers=True)
+            continue
+        if isinstance(value, dict):
+            out[key_str] = _redact_mapping(value, under_extra_headers=False)
+        elif isinstance(value, list):
+            out[key_str] = [
+                _redact_mapping(item, under_extra_headers=False)
+                if isinstance(item, dict)
+                else item
+                for item in value
+            ]
+        else:
+            out[key_str] = value
+    return out
+
+
+def find_credential_provider_param_paths(params: dict[str, Any]) -> list[str]:
+    """Return dotted paths of credential-shaped keys in *params* (for errors)."""
+    if not isinstance(params, dict):
+        return []
+    found: list[str] = []
+    _collect_credential_paths(params, prefix="", found=found, under_extra_headers=False)
+    return found
+
+
+def _collect_credential_paths(
+    params: dict[str, Any],
+    *,
+    prefix: str,
+    found: list[str],
+    under_extra_headers: bool,
+) -> None:
+    for key, value in params.items():
+        key_str = str(key)
+        path = f"{prefix}.{key_str}" if prefix else key_str
+        # Under extra_headers, only credential-shaped header names are forbidden
+        # on write; public reads still redact *all* extra_headers values.
+        if _is_credential_param_key(key_str):
+            found.append(path)
+            continue
+        if under_extra_headers:
+            continue
+        if _normalize_param_key(key_str) == "extra_headers" and isinstance(value, dict):
+            _collect_credential_paths(
+                value, prefix=path, found=found, under_extra_headers=True
+            )
+            continue
+        if isinstance(value, dict):
+            _collect_credential_paths(
+                value, prefix=path, found=found, under_extra_headers=False
+            )
+
+
+def reject_provider_params_secrets(params: dict[str, Any]) -> None:
+    """Raise ``ConfigError`` if *params* contains credential-shaped keys.
+
+    Clients must store secrets in top-level ``api_key`` / ``base_url``, not in
+    ``provider_params`` (which is shown in frontend config forms).
+    """
+    if params is None:
+        return
+    if not isinstance(params, dict):
+        raise ConfigError("provider_params must be a JSON object.")
+    bad = find_credential_provider_param_paths(params)
+    if bad:
+        raise ConfigError(
+            "provider_params must not contain credential keys "
+            f"({', '.join(bad)}). Use top-level api_key / base_url instead."
+        )
+
+
 def public_config(config: LoadedConfig) -> dict[str, Any]:
-    """Return config safe for clients; never disclose the API key."""
+    """Return config safe for clients; never disclose secrets.
+
+    ``api_key`` is always ``null`` with ``api_key_set`` indicating presence.
+    ``provider_params`` is deep-redacted via ``redact_provider_params``.
+    """
     raw = config_to_raw(config)
     return {
         "model": raw["model"],
         "api_key": None,
         "api_key_set": config.provider.api_key is not None,
         "base_url": raw["base_url"] or None,
-        "provider_params": raw["provider_params"],
+        "provider_params": redact_provider_params(raw["provider_params"]),
         "command_timeout_seconds": raw["command_timeout_seconds"],
         "max_command_output_bytes": raw["max_command_output_bytes"],
         "max_context_message_chars": raw["max_context_message_chars"],

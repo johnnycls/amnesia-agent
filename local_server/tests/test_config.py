@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from amnesia_agent_kernel import ConfigError
 from fastapi.testclient import TestClient
 
 from amnesia_agent_local_server.app import create_app
@@ -12,9 +13,12 @@ from amnesia_agent_local_server.config import (
     DEFAULT_MAX_COMMAND_OUTPUT_BYTES,
     DEFAULT_MAX_CONTEXT_MESSAGE_CHARS,
     DEFAULT_MODEL,
+    REDACTED_SENTINEL,
     ConfigStore,
     default_config_dict,
     public_config,
+    redact_provider_params,
+    reject_provider_params_secrets,
     resolve_request_workspace_path,
 )
 
@@ -132,7 +136,129 @@ class ConfigStoreTests(unittest.TestCase):
         self.assertEqual(resolve_request_workspace_path("/tmp/custom"), "/tmp/custom")
 
 
+
+class ProviderParamsRedactTests(unittest.TestCase):
+    def test_redact_provider_params_masks_credentials(self) -> None:
+        raw = {
+            "temperature": 0.2,
+            "api_key": "sk-secret",
+            "api_base": "https://evil.example/v1",
+            "extra_headers": {"Authorization": "Bearer x", "X-Custom": "y"},
+            "nested": {"token": "t", "ok": 1},
+        }
+        redacted = redact_provider_params(raw)
+        self.assertEqual(redacted["temperature"], 0.2)
+        self.assertEqual(redacted["api_key"], REDACTED_SENTINEL)
+        self.assertEqual(redacted["api_base"], REDACTED_SENTINEL)
+        self.assertEqual(redacted["extra_headers"]["Authorization"], REDACTED_SENTINEL)
+        self.assertEqual(redacted["extra_headers"]["X-Custom"], REDACTED_SENTINEL)
+        self.assertEqual(redacted["nested"]["token"], REDACTED_SENTINEL)
+        self.assertEqual(redacted["nested"]["ok"], 1)
+        # Original unchanged.
+        self.assertEqual(raw["api_key"], "sk-secret")
+
+    def test_reject_provider_params_secrets_fails_loud(self) -> None:
+        with self.assertRaises(ConfigError) as ctx:
+            reject_provider_params_secrets(
+                {
+                    "api_key": "sk-...",
+                    "extra_headers": {"Authorization": "Bearer x"},
+                }
+            )
+        message = str(ctx.exception)
+        self.assertIn("api_key", message)
+        self.assertIn("extra_headers.Authorization", message)
+
+    def test_reject_allows_safe_params(self) -> None:
+        reject_provider_params_secrets({"temperature": 0.1, "max_tokens": 16})
+
+    def test_public_config_redacts_provider_params(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = ConfigStore(directory)
+            store.path.parent.mkdir(parents=True, exist_ok=True)
+            store.path.write_text(
+                json.dumps(
+                    {
+                        "model": "openai/test",
+                        "api_key": "top-secret",
+                        "provider_params": {
+                            "temperature": 0.5,
+                            "api_key": "sk-nested",
+                            "extra_headers": {"Authorization": "Bearer x"},
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            public = public_config(store.load())
+            self.assertIsNone(public["api_key"])
+            self.assertTrue(public["api_key_set"])
+            self.assertEqual(public["provider_params"]["temperature"], 0.5)
+            self.assertEqual(public["provider_params"]["api_key"], REDACTED_SENTINEL)
+            self.assertEqual(
+                public["provider_params"]["extra_headers"]["Authorization"],
+                REDACTED_SENTINEL,
+            )
+
+    def test_http_put_rejects_credential_provider_params(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = ConfigStore(directory)
+            client = TestClient(create_app(store), raise_server_exceptions=False)
+            response = client.put(
+                "/v1/config",
+                json={
+                    "model": "openai/test",
+                    "provider_params": {
+                        "api_key": "sk-...",
+                        "extra_headers": {"Authorization": "Bearer x"},
+                    },
+                },
+            )
+            self.assertEqual(response.status_code, 400)
+            detail = response.json()["detail"]
+            self.assertIn("provider_params", detail)
+            self.assertIn("api_key", detail)
+
+    def test_http_put_safe_params_then_get_has_no_raw_secrets(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = ConfigStore(directory)
+            # Seed secrets on disk (legacy / manual edit); public GET must redact.
+            store.path.parent.mkdir(parents=True, exist_ok=True)
+            store.path.write_text(
+                json.dumps(
+                    {
+                        "model": "openai/test",
+                        "api_key": "top-secret",
+                        "provider_params": {
+                            "temperature": 0.3,
+                            "api_key": "sk-nested",
+                            "extra_headers": {"Authorization": "Bearer x"},
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            client = TestClient(create_app(store))
+            got = client.get("/v1/config")
+            self.assertEqual(got.status_code, 200)
+            body = got.json()
+            dumped = json.dumps(body)
+            self.assertNotIn("sk-nested", dumped)
+            self.assertNotIn("Bearer x", dumped)
+            self.assertNotIn("top-secret", dumped)
+            self.assertEqual(body["provider_params"]["temperature"], 0.3)
+            self.assertEqual(body["provider_params"]["api_key"], REDACTED_SENTINEL)
+
+            ok = client.put(
+                "/v1/config",
+                json={"provider_params": {"temperature": 0.7}},
+            )
+            self.assertEqual(ok.status_code, 200)
+            self.assertEqual(ok.json()["provider_params"]["temperature"], 0.7)
+
+
 class WorkspaceApiTests(unittest.TestCase):
+
     def test_workspace_lifecycle_endpoints(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = ConfigStore(directory)
