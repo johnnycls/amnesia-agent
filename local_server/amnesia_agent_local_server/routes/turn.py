@@ -12,7 +12,8 @@ from pydantic import BaseModel, Field
 
 from amnesia_agent_local_server.sse import encode_sse
 
-router = APIRouter(tags=["turn"])
+# Empty path "" (not "/") so mount is /v1/turn without a trailing slash.
+router = APIRouter(prefix="/turn", tags=["turn"])
 
 
 class TurnRequest(BaseModel):
@@ -23,7 +24,7 @@ class TurnRequest(BaseModel):
     workspace_path: str | None = None
 
 
-@router.post("/turn")
+@router.post("")
 async def turn(turn_request: TurnRequest, request: Request) -> StreamingResponse:
     session = request.app.state.session
     # Acquire busy synchronously so TurnBusyError maps to HTTP 409 before SSE.

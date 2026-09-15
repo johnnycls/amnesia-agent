@@ -16,6 +16,7 @@ from amnesia_agent_local_server.config import (
     public_config,
     resolve_request_workspace_path,
 )
+from amnesia_agent_local_server.constants import API_VERSION
 from amnesia_agent_local_server.sse import event_envelope
 
 
@@ -69,7 +70,7 @@ class SessionManager:
             "status": "ok",
             "active_turn": self.active_turn,
             "active_workspaces": self.active_workspaces,
-            "api_version": "v1",
+            "api_version": API_VERSION,
             "instance_id": self.instance_id,
         }
 
