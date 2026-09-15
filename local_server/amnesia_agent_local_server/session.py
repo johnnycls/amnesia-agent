@@ -6,7 +6,13 @@ from collections.abc import AsyncGenerator, AsyncIterator, Mapping, Sequence
 from contextlib import aclosing
 from typing import Any
 
-from amnesia_agent_kernel import AgentError, ExecutionPolicy, KernelSession, ProviderConfig
+from amnesia_agent_kernel import (
+    AgentError,
+    ConfigError,
+    ExecutionPolicy,
+    KernelSession,
+    ProviderConfig,
+)
 from amnesia_agent_kernel.workspace.paths import resolve_root
 from litellm.types.llms.openai import AllMessageValues
 
@@ -26,10 +32,11 @@ class TurnBusyError(Exception):
 
 
 def resolved_workspace_key(workspace_path: str | None) -> str:
-    """Absolute workspace path string used as the turn lock key.
+    """Resolved realpath string used as the turn lock key.
 
-    Matches kernel ``resolve_root`` after request normalization: omit / ``None`` /
-    empty → default ``~/.amnesia-agent`` so those request forms share one lock.
+    Matches kernel ``resolve_root`` (expanduser + ``resolve(strict=False)``) after
+    request normalization: omit / ``None`` / empty → default ``~/.amnesia-agent``
+    so those request forms share one lock. A symlink and its target share one key.
     """
     return str(resolve_root(resolve_request_workspace_path(workspace_path)))
 
@@ -239,8 +246,14 @@ def _merge_config(current: LoadedConfig, fields: Mapping[str, Any]) -> LoadedCon
     if model is None:
         model = current.provider.model
 
+    clear_key = bool(fields.get("api_key_clear"))
+    has_api_key = "api_key" in fields and fields["api_key"] not in (None, "")
+    if clear_key and has_api_key:
+        raise ConfigError("Cannot set api_key and api_key_clear in the same update.")
     api_key = current.provider.api_key
-    if "api_key" in fields and fields["api_key"] not in (None, ""):
+    if clear_key:
+        api_key = None
+    elif has_api_key:
         api_key = fields["api_key"]
 
     if "base_url" in fields:

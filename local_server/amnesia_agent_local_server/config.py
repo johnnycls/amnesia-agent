@@ -12,6 +12,7 @@ from amnesia_agent_kernel import (
     ConfigError,
     ExecutionPolicy,
     ProviderConfig,
+    ProviderError,
     validate_execution_policy,
     validate_provider_config,
 )
@@ -58,15 +59,31 @@ def _blank_as_none(value: Any) -> Any:
 
 def _resolve_root(root: str | os.PathLike[str] | None) -> Path:
     if root is None:
-        return DEFAULT_CONFIG_DIR
+        return DEFAULT_CONFIG_DIR.resolve(strict=False)
     if isinstance(root, bool) or not isinstance(root, (str, os.PathLike)):
         raise ConfigError(f"Invalid config root {root!r}")
     if root == "":
         raise ConfigError("Config root must not be empty.")
     try:
-        return Path(root).expanduser().absolute()
+        return Path(root).expanduser().resolve(strict=False)
     except (OSError, TypeError, ValueError) as error:
         raise ConfigError(f"Invalid config root {root!r}: {error}") from error
+
+
+def _atomic_write_json(path: Path, raw: dict[str, Any]) -> None:
+    """Atomically write JSON then ``chmod`` the result to ``0o600``."""
+    temporary = path.with_suffix(".tmp")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary.write_text(json.dumps(raw, indent=2) + "\n", encoding="utf-8")
+        temporary.replace(path)
+        os.chmod(path, 0o600)
+    except OSError as error:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise ConfigError(f"Cannot write config {path}: {error}", path=str(path)) from error
 
 
 @dataclass(frozen=True)
@@ -112,19 +129,7 @@ class ConfigStore:
         return self.root / "config.json"
 
     def _atomic_write(self, raw: dict[str, Any]) -> None:
-        temporary = self.path.with_suffix(".tmp")
-        try:
-            self.root.mkdir(parents=True, exist_ok=True)
-            temporary.write_text(json.dumps(raw, indent=2) + "\n", encoding="utf-8")
-            temporary.replace(self.path)
-        except OSError as error:
-            try:
-                temporary.unlink(missing_ok=True)
-            except OSError:
-                pass
-            raise ConfigError(
-                f"Cannot write config {self.path}: {error}", path=str(self.path)
-            ) from error
+        _atomic_write_json(self.path, raw)
 
     def write_defaults(self) -> None:
         """Rewrite ``config.json`` from importable defaults constants."""
@@ -206,7 +211,12 @@ class ConfigStore:
 
 
 def _validate_provider(provider: ProviderConfig) -> None:
-    """Validate provider fields while permitting the initial blank model."""
+    """Validate provider fields for persistence.
+
+    Blank model is checked as ``unconfigured`` so the settings UI can persist an
+    incomplete initial config. Missing API keys are allowed here so clients can
+    clear credentials; ``KernelSession`` still validates before a turn.
+    """
     if isinstance(provider.model, str) and not provider.model.strip():
         provider = ProviderConfig(
             model="unconfigured",
@@ -214,7 +224,12 @@ def _validate_provider(provider: ProviderConfig) -> None:
             base_url=provider.base_url,
             provider_params=provider.provider_params,
         )
-    validate_provider_config(provider)
+    try:
+        validate_provider_config(provider)
+    except ProviderError as error:
+        if provider.api_key is None and "provide credentials" in str(error):
+            return
+        raise
 
 
 # Credential-shaped keys rejected from provider_params on write and redacted on
@@ -271,9 +286,7 @@ def _redact_mapping(params: dict[str, Any], *, under_extra_headers: bool) -> dic
             out[key_str] = _redact_mapping(value, under_extra_headers=False)
         elif isinstance(value, list):
             out[key_str] = [
-                _redact_mapping(item, under_extra_headers=False)
-                if isinstance(item, dict)
-                else item
+                _redact_mapping(item, under_extra_headers=False) if isinstance(item, dict) else item
                 for item in value
             ]
         else:
@@ -308,14 +321,10 @@ def _collect_credential_paths(
         if under_extra_headers:
             continue
         if _normalize_param_key(key_str) == "extra_headers" and isinstance(value, dict):
-            _collect_credential_paths(
-                value, prefix=path, found=found, under_extra_headers=True
-            )
+            _collect_credential_paths(value, prefix=path, found=found, under_extra_headers=True)
             continue
         if isinstance(value, dict):
-            _collect_credential_paths(
-                value, prefix=path, found=found, under_extra_headers=False
-            )
+            _collect_credential_paths(value, prefix=path, found=found, under_extra_headers=False)
 
 
 def reject_provider_params_secrets(params: dict[str, Any]) -> None:

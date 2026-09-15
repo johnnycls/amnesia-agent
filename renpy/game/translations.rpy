@@ -2,6 +2,21 @@
 # left untouched so users can converse in any language supported by their provider.
 
 translate schinese strings:
+
+    old "Clear API key"
+    new "清除 API 密钥"
+
+    old "Clear the stored API key?"
+    new "清除已存储的 API 密钥？"
+
+    old "Clearing API key..."
+    new "正在清除 API 密钥……"
+
+    old "API key cleared"
+    new "已清除 API 密钥"
+
+    old "Cannot clear API key while the agent is busy."
+    new "智能体忙碌时无法清除 API 密钥。"
     old "API key (leave blank to keep the current key)"
     new "API 密钥（留空以保留当前密钥）"
 
@@ -26,8 +41,6 @@ translate schinese strings:
     old "Cancelling..."
     new "正在取消……"
 
-    old "Cannot leave while the agent is busy."
-    new "智能体忙碌时无法离开。"
 
     old "Cannot quit while the agent is busy."
     new "智能体忙碌时无法退出。"
@@ -309,6 +322,21 @@ translate schinese strings:
     new "工作区："
 
 translate tchinese strings:
+
+    old "Clear API key"
+    new "清除 API 金鑰"
+
+    old "Clear the stored API key?"
+    new "清除已儲存的 API 金鑰？"
+
+    old "Clearing API key..."
+    new "正在清除 API 金鑰……"
+
+    old "API key cleared"
+    new "已清除 API 金鑰"
+
+    old "Cannot clear API key while the agent is busy."
+    new "智能體忙碌時無法清除 API 金鑰。"
     old "API key (leave blank to keep the current key)"
     new "API 金鑰（留白以保留目前金鑰）"
 
@@ -333,8 +361,6 @@ translate tchinese strings:
     old "Cancelling..."
     new "正在取消……"
 
-    old "Cannot leave while the agent is busy."
-    new "智能體忙碌時無法離開。"
 
     old "Cannot quit while the agent is busy."
     new "智能體忙碌時無法結束。"
@@ -616,6 +642,21 @@ translate tchinese strings:
     new "工作區："
 
 translate japanese strings:
+
+    old "Clear API key"
+    new "APIキーを消去"
+
+    old "Clear the stored API key?"
+    new "保存済みのAPIキーを消去しますか？"
+
+    old "Clearing API key..."
+    new "APIキーを消去しています……"
+
+    old "API key cleared"
+    new "APIキーを消去しました"
+
+    old "Cannot clear API key while the agent is busy."
+    new "エージェント動作中はAPIキーを消去できません。"
     old "API key (leave blank to keep the current key)"
     new "API キー（現在のキーを保持する場合は空欄）"
 
@@ -640,8 +681,6 @@ translate japanese strings:
     old "Cancelling..."
     new "キャンセル中……"
 
-    old "Cannot leave while the agent is busy."
-    new "エージェント処理中は離れられません。"
 
     old "Cannot quit while the agent is busy."
     new "エージェント処理中は終了できません。"
@@ -923,6 +962,21 @@ translate japanese strings:
     new "ワークスペース："
 
 translate korean strings:
+
+    old "Clear API key"
+    new "API 키 지우기"
+
+    old "Clear the stored API key?"
+    new "저장된 API 키를 지울까요?"
+
+    old "Clearing API key..."
+    new "API 키를 지우는 중……"
+
+    old "API key cleared"
+    new "API 키를 지웠습니다"
+
+    old "Cannot clear API key while the agent is busy."
+    new "에이전트가 사용 중일 때는 API 키를 지울 수 없습니다."
     old "API key (leave blank to keep the current key)"
     new "API 키 (현재 키를 유지하려면 비워 두세요)"
 
@@ -947,8 +1001,6 @@ translate korean strings:
     old "Cancelling..."
     new "취소 중..."
 
-    old "Cannot leave while the agent is busy."
-    new "에이전트가 바쁠 때는 나갈 수 없습니다."
 
     old "Cannot quit while the agent is busy."
     new "에이전트가 바쁠 때는 종료할 수 없습니다."

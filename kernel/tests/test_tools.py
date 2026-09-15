@@ -3,7 +3,9 @@ import os
 import shlex
 import subprocess
 import sys
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 from amnesia_agent_kernel.tools import execute_tool_calls, run_shell
@@ -42,7 +44,7 @@ class ToolTests(unittest.IsolatedAsyncioTestCase):
         observed: list[str] = []
         all_started = asyncio.Event()
 
-        async def fake_run(call: dict[str, object], *args: object) -> str:
+        async def fake_run(call: dict[str, object], *args: object, **kwargs: object) -> str:
             observed.append(str(call["id"]))
             if len(observed) == len(calls):
                 all_started.set()
@@ -55,6 +57,17 @@ class ToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(set(observed), {"one", "two"})
         self.assertEqual([message["tool_call_id"] for message in messages], ["one", "two"])
         self.assertEqual([message["content"] for message in messages], ["result-one", "result-two"])
+
+    async def test_run_shell_uses_cwd(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            marker = Path(directory) / "marker.txt"
+            marker.write_text("here", encoding="utf-8")
+            command = python_command(
+                "import pathlib; print(pathlib.Path('marker.txt').read_text())"
+            )
+            result = await run_shell(command, cwd=directory)
+            self.assertIn("here", result)
+            self.assertIn("exit code: 0", result)
 
 
 if __name__ == "__main__":

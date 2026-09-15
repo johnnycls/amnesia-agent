@@ -24,10 +24,11 @@ SHELL_TOOL: dict[str, Any] = {
         "description": (
             "Run a shell command via the platform default shell "
             "(asyncio.create_subprocess_shell; not necessarily bash) and return its "
-            "exit code plus combined stdout/stderr as plain text. All agent work should "
-            "go through this tool: compose commands thoughtfully for file operations, "
-            "scripts, API calls, editing memory/prompt files, and other tasks. Commands "
-            "have a session timeout and bounded output."
+            "exit code plus combined stdout/stderr as plain text. The command's working "
+            "directory (cwd) is the workspace root. All agent work should go through "
+            "this tool: compose commands thoughtfully for file operations, scripts, "
+            "API calls, editing memory/prompt files, and other tasks. Commands have a "
+            "session timeout and bounded output."
         ),
         "parameters": {
             "type": "object",
@@ -52,37 +53,7 @@ def _process_options() -> dict[str, Any]:
     raise ToolError(f"Unsupported process-group platform: {sys.platform}", tool="shell")
 
 
-async def _terminate_process(proc: asyncio.subprocess.Process) -> None:
-    """Terminate the shell and all descendants started for the command."""
-    if proc.returncode is not None:
-        return
-    try:
-        if sys.platform == "win32":
-            killer = await asyncio.create_subprocess_exec(
-                "taskkill",
-                "/PID",
-                str(proc.pid),
-                "/T",
-                "/F",
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-            await killer.wait()
-            if proc.returncode is None:
-                proc.kill()
-        else:
-            os.killpg(proc.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
-    except (OSError, TypeError, ValueError) as e:
-        raise ToolError(f"Could not terminate shell process: {e}", tool="shell") from e
-    try:
-        await proc.wait()
-    except (OSError, TypeError, ValueError) as e:
-        raise ToolError(f"Could not wait for shell process: {e}", tool="shell") from e
-
-
-async def _kill_process_group(proc: asyncio.subprocess.Process) -> None:
+async def _signal_process_group(proc: asyncio.subprocess.Process) -> None:
     """Signal the shell process group to exit without waiting for reaping."""
     if proc.returncode is not None:
         return
@@ -106,6 +77,15 @@ async def _kill_process_group(proc: asyncio.subprocess.Process) -> None:
         pass
     except (OSError, TypeError, ValueError) as e:
         raise ToolError(f"Could not terminate shell process: {e}", tool="shell") from e
+
+
+async def _terminate_process(proc: asyncio.subprocess.Process) -> None:
+    """Terminate the shell process group and wait for the process to exit."""
+    await _signal_process_group(proc)
+    try:
+        await proc.wait()
+    except (OSError, TypeError, ValueError) as e:
+        raise ToolError(f"Could not wait for shell process: {e}", tool="shell") from e
 
 
 class _OutputCollector:
@@ -172,7 +152,7 @@ async def _collect_output(
                     # Kill and cancel the concurrent waiter/readers. A second
                     # Process.wait() can deadlock while pipe buffers are full;
                     # run_shell reaps via communicate() afterward.
-                    await _kill_process_group(proc)
+                    await _signal_process_group(proc)
                     for pending_task in readers | {waiter}:
                         pending_task.cancel()
                     await asyncio.gather(*readers, waiter, return_exceptions=True)
@@ -219,8 +199,13 @@ async def run_shell(
     command: str,
     timeout_seconds: float = 1800.0,
     max_output_bytes: int = 256 * 1024,
+    cwd: str | os.PathLike[str] | None = None,
 ) -> str:
-    """Run a shell command with timeout and combined-output limits."""
+    """Run a shell command with timeout and combined-output limits.
+
+    ``cwd`` is the process working directory (workspace root when called from
+    the agent). ``None`` keeps the parent process cwd.
+    """
     if not isinstance(command, str) or not command:
         raise ToolError("shell command must be a non-empty string", tool="shell")
     if (
@@ -239,6 +224,7 @@ async def run_shell(
             command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            cwd=cwd,
             **options,
         )
     except ToolError:
@@ -291,6 +277,7 @@ async def run_tool_call(
     call: dict[str, Any],
     timeout_seconds: float = 1800.0,
     max_output_bytes: int = 256 * 1024,
+    cwd: str | os.PathLike[str] | None = None,
 ) -> str:
     """Parse a tool call and run its shell command, returning result text."""
     try:
@@ -303,7 +290,7 @@ async def run_tool_call(
     except (json.JSONDecodeError, KeyError, TypeError, ToolError) as e:
         return _tool_error_text(e)
     try:
-        return await run_shell(command, timeout_seconds, max_output_bytes)
+        return await run_shell(command, timeout_seconds, max_output_bytes, cwd=cwd)
     except ToolError as e:
         return _tool_error_text(e)
 
@@ -320,10 +307,11 @@ async def execute_tool_calls(
     tool_calls: Sequence[dict[str, Any]],
     timeout_seconds: float = 1800.0,
     max_output_bytes: int = 256 * 1024,
+    cwd: str | os.PathLike[str] | None = None,
 ) -> list[AllMessageValues]:
     """Execute all calls concurrently and return results in call order."""
     tasks = [
-        asyncio.create_task(run_tool_call(call, timeout_seconds, max_output_bytes))
+        asyncio.create_task(run_tool_call(call, timeout_seconds, max_output_bytes, cwd=cwd))
         for call in tool_calls
     ]
     try:

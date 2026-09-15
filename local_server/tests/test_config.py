@@ -136,7 +136,6 @@ class ConfigStoreTests(unittest.TestCase):
         self.assertEqual(resolve_request_workspace_path("/tmp/custom"), "/tmp/custom")
 
 
-
 class ProviderParamsRedactTests(unittest.TestCase):
     def test_redact_provider_params_masks_credentials(self) -> None:
         raw = {
@@ -257,8 +256,65 @@ class ProviderParamsRedactTests(unittest.TestCase):
             self.assertEqual(ok.json()["provider_params"]["temperature"], 0.7)
 
 
-class WorkspaceApiTests(unittest.TestCase):
+class ApiKeyUpdateTests(unittest.TestCase):
+    def test_blank_api_key_leaves_stored_key_unchanged(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = ConfigStore(directory)
+            store.path.parent.mkdir(parents=True, exist_ok=True)
+            store.path.write_text(
+                json.dumps({"model": "openai/test", "api_key": "secret-key"}),
+                encoding="utf-8",
+            )
+            client = TestClient(create_app(store))
+            response = client.put("/v1/config", json={"model": "openai/other", "api_key": ""})
+            self.assertEqual(response.status_code, 200)
+            self.assertTrue(response.json()["api_key_set"])
+            loaded = store.load()
+            self.assertEqual(loaded.provider.model, "openai/other")
+            self.assertEqual(loaded.provider.api_key, "secret-key")
 
+    def test_api_key_clear_removes_stored_key(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = ConfigStore(directory)
+            store.path.parent.mkdir(parents=True, exist_ok=True)
+            store.path.write_text(
+                json.dumps({"model": "openai/test", "api_key": "secret-key"}),
+                encoding="utf-8",
+            )
+            client = TestClient(create_app(store))
+            response = client.put("/v1/config", json={"api_key_clear": True})
+            self.assertEqual(response.status_code, 200)
+            body = response.json()
+            self.assertFalse(body["api_key_set"])
+            self.assertIsNone(body["api_key"])
+            loaded = store.load()
+            self.assertIsNone(loaded.provider.api_key)
+
+    def test_api_key_clear_with_new_key_fails_loud(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = ConfigStore(directory)
+            store.path.parent.mkdir(parents=True, exist_ok=True)
+            store.path.write_text(
+                json.dumps({"model": "openai/test", "api_key": "secret-key"}),
+                encoding="utf-8",
+            )
+            client = TestClient(create_app(store), raise_server_exceptions=False)
+            response = client.put(
+                "/v1/config",
+                json={"api_key_clear": True, "api_key": "new-secret"},
+            )
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("api_key_clear", response.json()["detail"])
+
+    def test_atomic_write_sets_mode_0600(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = ConfigStore(directory)
+            store.write_defaults()
+            mode = store.path.stat().st_mode & 0o777
+            self.assertEqual(mode, 0o600)
+
+
+class WorkspaceApiTests(unittest.TestCase):
     def test_workspace_lifecycle_endpoints(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = ConfigStore(directory)

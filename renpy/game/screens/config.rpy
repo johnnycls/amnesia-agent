@@ -31,6 +31,7 @@ screen config_page():
                 if app.settings_api_key_set:
                     text _("API key is set") style "app_small"
                 input value VariableInputValue("settings_api_key") xfill True mask "*"
+                textbutton _("Clear API key") action Confirm(_("Clear the stored API key?"), Function(app.clear_api_key))
                 text _("Base URL") style "app_small"
                 input value VariableInputValue("settings_base_url") xfill True
                 text _("Provider params (JSON object)") style "app_small"

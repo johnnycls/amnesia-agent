@@ -100,7 +100,7 @@ GET /v1/health
 ```
 
 `active_turn` is true when **any** workspace has an in-flight turn.
-`active_workspaces` lists the resolved absolute path keys currently busy
+`active_workspaces` lists the resolved realpath keys currently busy (expanduser + `Path.resolve(strict=False)`; symlink and target share one key)
 (empty when idle). `instance_id` is a random UUID set at startup so frontends
 can detect stale servers on a contested port.
 
@@ -109,7 +109,10 @@ can detect stale servers on a contested port.
 ```text
 GET  /v1/config           → public config (api_key masked; provider_params redacted)
 PUT  /v1/config           → partial update (any subset of keys; credential
-                            provider_params → 400)
+                            provider_params → 400). Blank/omitted `api_key`
+                            leaves the stored key unchanged; `api_key_clear: true`
+                            clears it explicitly (do not combine with a non-blank
+                            `api_key`).
 POST /v1/config/reset     → rewrite defaults from constants
 ```
 
@@ -193,7 +196,7 @@ data: {"type":"error","data":{"error_type":"...","message":"..."}}
 Mirrors `KernelSession` staticmethods and read/update APIs. The workspace root
 comes from an optional per-request `workspace_path` (omit / `null` / empty →
 kernel default `~/.amnesia-agent`; otherwise the string is passed through, with
-expanduser in the kernel). Invalid roots fail loud as `WorkspaceError` → HTTP
+expanduser + resolve in the kernel). Invalid roots fail loud as `WorkspaceError` → HTTP
 **400**.
 
 - **GET** routes: optional query param `?workspace_path=...`
