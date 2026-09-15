@@ -191,7 +191,12 @@ malformed inputs raise `WorkspaceError` without deleting it. Kind/sidecar histor
 events are no longer accepted.
 
 The shell tool schema is a kernel constant. It is not copied to the workspace and
-cannot be changed through workspace files.
+cannot be changed through workspace files. Shell commands run with the workspace
+root as their process working directory (`cwd`).
+
+Workspace path identity (including history locks) uses `expanduser` plus
+`Path.resolve(strict=False)` so relative/absolute forms and symlink/target pairs
+share one realpath.
 
 ## Suggested system prompt
 

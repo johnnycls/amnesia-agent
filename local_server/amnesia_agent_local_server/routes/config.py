@@ -11,10 +11,15 @@ router = APIRouter(prefix="/config", tags=["config"])
 
 
 class ConfigUpdate(BaseModel):
-    """Partial config update; omitted values retain their current values."""
+    """Partial config update; omitted values retain their current values.
+
+    Blank / omitted ``api_key`` leaves the stored key unchanged. Set
+    ``api_key_clear: true`` to remove the stored key explicitly.
+    """
 
     model: str | None = None
     api_key: str | None = None
+    api_key_clear: bool | None = None
     base_url: str | None = None
     provider_params: dict[str, Any] | None = None
     command_timeout_seconds: float | int | None = None

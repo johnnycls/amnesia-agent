@@ -50,9 +50,9 @@ class RenpyConfigStore:
 
     def __init__(self, root: str | os.PathLike[str] | None = None) -> None:
         if root is None:
-            self.root = DEFAULT_CONFIG_DIR
+            self.root = DEFAULT_CONFIG_DIR.resolve(strict=False)
         else:
-            self.root = Path(root).expanduser().absolute()
+            self.root = Path(root).expanduser().resolve(strict=False)
 
     @property
     def path(self) -> Path:
@@ -88,7 +88,7 @@ class RenpyConfigStore:
     def bump_recent(self, workspace_path: str) -> RenpyConfig:
         """Move/insert workspace at top of recent list and persist."""
         config = self.load()
-        normalized = str(Path(workspace_path).expanduser())
+        normalized = str(Path(workspace_path).expanduser().resolve(strict=False))
         now = utc_now_iso()
         entries = [
             WorkspaceEntry(path=e.path, last_opened_at=e.last_opened_at)
@@ -96,13 +96,15 @@ class RenpyConfigStore:
             if e.path != normalized
         ]
         entries.insert(0, WorkspaceEntry(path=normalized, last_opened_at=now))
-        updated = RenpyConfig(language=config.language, recent_workspaces=tuple(entries))
+        updated = RenpyConfig(
+            language=config.language, recent_workspaces=tuple(entries)
+        )
         self.save(updated)
         return updated
 
     def remove_recent(self, workspace_path: str) -> RenpyConfig:
         config = self.load()
-        normalized = str(Path(workspace_path).expanduser())
+        normalized = str(Path(workspace_path).expanduser().resolve(strict=False))
         entries = tuple(e for e in config.recent_workspaces if e.path != normalized)
         updated = RenpyConfig(language=config.language, recent_workspaces=entries)
         self.save(updated)
@@ -124,6 +126,7 @@ class RenpyConfigStore:
             self.root.mkdir(parents=True, exist_ok=True)
             temporary.write_text(json.dumps(raw, indent=2) + "\n", encoding="utf-8")
             temporary.replace(self.path)
+            os.chmod(self.path, 0o600)
         except OSError as error:
             try:
                 temporary.unlink(missing_ok=True)

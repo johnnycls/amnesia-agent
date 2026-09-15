@@ -7,13 +7,13 @@ import threading
 from typing import Any
 
 from api.client import ApiError, Client, TurnHandle, invoke
+from defaults.system_prompt import DEFAULT_SYSTEM_PROMPT
 from home_config.store import (
     SUPPORTED_LANGUAGES,
     ConfigError,
     RenpyConfig,
     RenpyConfigStore,
 )
-from defaults.system_prompt import DEFAULT_SYSTEM_PROMPT
 from process.lifecycle import ServerProcess
 
 try:
@@ -36,7 +36,6 @@ def localize(template: str, **values: Any) -> str:
         if callable(translate_string):
             template = translate_string(template)
     return template.format(**values)
-
 
 
 def format_history_messages(messages: Any) -> str:
@@ -82,7 +81,6 @@ class AppState:
 
         self.workspace_path = ""
         self.pending_workspace_path = ""
-        self.pending_workspace_action = ""  # setup_or_repair | create_or_reset
 
         self.last_assistant_text = ""
         self.last_assistant_choices: list[str] = []
@@ -236,7 +234,7 @@ class AppState:
         threading.Thread(target=work, name="amnesia-pick-import", daemon=True).start()
 
     def pick_create_workspace(self) -> None:
-        """OS folder picker → create_workspace (soft create-or-reset). Cancel is a no-op."""
+        """OS folder picker → Confirm → create_workspace (soft create-or-reset)."""
         if self.busy:
             return
 
@@ -244,9 +242,19 @@ class AppState:
             path = self._ask_directory()
             if not path:
                 return
-            invoke(self.create_workspace, path)
+            invoke(self._confirm_create_workspace, path)
 
         threading.Thread(target=work, name="amnesia-pick-create", daemon=True).start()
+
+    def _confirm_create_workspace(self, path: str) -> None:
+        """Warn before soft-reset; same tone as invalid-page create-or-reset."""
+        message = localize(
+            "Soft-reset this workspace? Prompt and memory will be emptied "
+            "and history cleared; other files stay."
+        )
+        if renpy is not None and not renpy.confirm(message):
+            return
+        self.create_workspace(path)
 
     def open_workspace(self, path: str) -> None:
         path = path.strip()
@@ -500,7 +508,9 @@ class AppState:
         self._refresh()
 
     def save_system_prompt(self, content: str) -> None:
-        self._put_workspace_file("/v1/workspace/system-prompt", content, "system_prompt_text")
+        self._put_workspace_file(
+            "/v1/workspace/system-prompt", content, "system_prompt_text"
+        )
 
     def save_memory(self, content: str) -> None:
         self._put_workspace_file("/v1/workspace/memory", content, "memory_text")
@@ -702,9 +712,7 @@ class AppState:
         )
         self.settings_timeout = str(config.get("command_timeout_seconds", 1800))
         self.settings_output_limit = str(config.get("max_command_output_bytes", 262144))
-        self.settings_context_limit = str(
-            config.get("max_context_message_chars", 1000)
-        )
+        self.settings_context_limit = str(config.get("max_context_message_chars", 1000))
         for name in (
             "settings_model",
             "settings_api_key",
@@ -768,7 +776,9 @@ class AppState:
 
         threading.Thread(target=work, name="amnesia-cfg-save", daemon=True).start()
 
-    def _config_saved(self, renpy_config: RenpyConfig, server_config: dict[str, Any]) -> None:
+    def _config_saved(
+        self, renpy_config: RenpyConfig, server_config: dict[str, Any]
+    ) -> None:
         self.renpy_config = renpy_config
         self.settings_language = renpy_config.language
         self._apply_language(renpy_config.language)
@@ -795,6 +805,30 @@ class AppState:
     def _server_config_reset(self, config: dict[str, Any]) -> None:
         self._apply_server_config(config)
         self.status = localize("Local server settings reset")
+        self._refresh()
+
+    def clear_api_key(self) -> None:
+        """Explicitly clear the stored API key (blank field still means leave unchanged)."""
+        if self.busy:
+            self._set_status("Cannot clear API key while the agent is busy.")
+            return
+        self.status = localize("Clearing API key...")
+        self._refresh()
+
+        def work() -> None:
+            try:
+                config = self.client.request_json(
+                    "PUT", "/v1/config", {"api_key_clear": True}
+                )
+                invoke(self._api_key_cleared, config)
+            except Exception as error:  # noqa: BLE001
+                invoke(self._settings_failed, error)
+
+        threading.Thread(target=work, name="amnesia-cfg-clear-key", daemon=True).start()
+
+    def _api_key_cleared(self, config: dict[str, Any]) -> None:
+        self._apply_server_config(config)
+        self.status = localize("API key cleared")
         self._refresh()
 
     def reset_renpy_config(self) -> None:

@@ -185,6 +185,7 @@ async def agent_turn(
                     tool_calls,
                     timeout_seconds=policy.command_timeout_seconds,
                     max_output_bytes=policy.max_command_output_bytes,
+                    cwd=workspace.root,
                 )
             except ToolError as tool_error:
                 try:

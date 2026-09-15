@@ -10,6 +10,7 @@ from collections.abc import Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, ClassVar, cast
+from weakref import WeakValueDictionary
 
 from litellm.types.llms.openai import AllMessageValues
 
@@ -23,26 +24,38 @@ from amnesia_agent_kernel.workspace.paths import (
 )
 
 
+class _HistoryLockHolder:
+    """Strong-ref target for a path's history lock (WeakValueDictionary value)."""
+
+    __slots__ = ("__weakref__", "lock")
+
+    def __init__(self) -> None:
+        self.lock = threading.RLock()
+
+
 class HistoryStore:
     """Thread-safe history operations for one workspace root."""
 
     _lock_registry_guard: ClassVar[Any] = threading.Lock()
-    _lock_registry: ClassVar[dict[str, Any]] = {}
+    # Locks release when no HistoryStore (via Workspace) keeps a holder alive.
+    _lock_registry: ClassVar[WeakValueDictionary[str, _HistoryLockHolder]] = WeakValueDictionary()
 
     @classmethod
-    def _lock_for_root(cls, root: Path) -> Any:
+    def _lock_holder_for_root(cls, root: Path) -> _HistoryLockHolder:
         key = os.path.normcase(str(root))
         with cls._lock_registry_guard:
-            lock = cls._lock_registry.get(key)
-            if lock is None:
-                lock = threading.RLock()
-                cls._lock_registry[key] = lock
-            return lock
+            holder = cls._lock_registry.get(key)
+            if holder is None:
+                holder = _HistoryLockHolder()
+                cls._lock_registry[key] = holder
+            return holder
 
     def __init__(self, root: Path, clock: Any) -> None:
         self.root = root
         self._clock = clock
-        self._history_lock = self._lock_for_root(root)
+        # Keep a strong ref so the WeakValueDictionary entry stays while we use it.
+        self._lock_holder = self._lock_holder_for_root(root)
+        self._history_lock = self._lock_holder.lock
 
     def _today(self) -> str:
         try:
@@ -106,8 +119,10 @@ class HistoryStore:
         role = value["role"]
         if role not in ("system", "user", "assistant", "tool"):
             raise ValueError(f"line {number} has an invalid role")
-        if "content" in value and value["content"] is not None and not isinstance(
-            value["content"], str
+        if (
+            "content" in value
+            and value["content"] is not None
+            and not isinstance(value["content"], str)
         ):
             raise ValueError(f"line {number} has invalid content")
         if "timestamp" in value and not isinstance(value["timestamp"], str):
@@ -175,9 +190,7 @@ class HistoryStore:
                 stamped.append(cast(dict[str, Any], message))
         return stamped
 
-    def update_history(
-        self, messages: Sequence[AllMessageValues], date: str | None = None
-    ) -> None:
+    def update_history(self, messages: Sequence[AllMessageValues], date: str | None = None) -> None:
         if isinstance(messages, (str, bytes, bytearray)) or not isinstance(messages, Sequence):
             raise WorkspaceError("History messages must be a sequence of message objects")
         selected_date = validate_date(date) if date is not None else self._today()

@@ -1,4 +1,6 @@
+import gc
 import json
+import os
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -6,6 +8,8 @@ from pathlib import Path
 
 from amnesia_agent_kernel.errors import AgentError
 from amnesia_agent_kernel.workspace import Workspace
+from amnesia_agent_kernel.workspace.history import HistoryStore
+from amnesia_agent_kernel.workspace.paths import resolve_root
 
 
 class HistoryTests(unittest.TestCase):
@@ -20,9 +24,7 @@ class HistoryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             workspace = Workspace(directory, clock=self.fixed_clock)
             workspace.append_history({"role": "user", "content": "hi"})
-            workspace.update_history(
-                [{"role": "assistant", "content": "older"}], date="2026-08-27"
-            )
+            workspace.update_history([{"role": "assistant", "content": "older"}], date="2026-08-27")
 
             self.assertEqual(workspace.list_history(), ["2026-08-28", "2026-08-27"])
             self.assertEqual(
@@ -50,6 +52,7 @@ class HistoryTests(unittest.TestCase):
     def test_append_uses_utc_date_for_timezone_aware_clock(self) -> None:
         def local_clock() -> datetime:
             return datetime(2026, 8, 27, 23, 30, tzinfo=timezone(timedelta(hours=-1)))
+
         with tempfile.TemporaryDirectory() as directory:
             workspace = Workspace(directory, clock=local_clock)
             workspace.append_history({"role": "user", "content": "utc"})
@@ -86,12 +89,8 @@ class HistoryTests(unittest.TestCase):
         """Delete-day path: update_history([], date=...) unlinks the jsonl entirely."""
         with tempfile.TemporaryDirectory() as directory:
             workspace = Workspace(directory, clock=self.fixed_clock)
-            workspace.update_history(
-                [{"role": "user", "content": "keep"}], date="2026-08-27"
-            )
-            workspace.update_history(
-                [{"role": "user", "content": "drop"}], date="2026-08-26"
-            )
+            workspace.update_history([{"role": "user", "content": "keep"}], date="2026-08-27")
+            workspace.update_history([{"role": "user", "content": "drop"}], date="2026-08-26")
             drop_path = Path(directory, "history", "2026-08-26.jsonl")
             keep_path = Path(directory, "history", "2026-08-27.jsonl")
             self.assertTrue(drop_path.exists())
@@ -190,6 +189,26 @@ class HistoryTests(unittest.TestCase):
             )
             self.assertEqual(workspace.read_history(), [])
             self.assertEqual(workspace.list_history(), [])
+
+    def test_history_lock_registry_releases_when_unused(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = resolve_root(directory)
+            key = os.path.normcase(str(root))
+            workspace = Workspace(directory, clock=self.fixed_clock)
+            self.assertIn(key, HistoryStore._lock_registry)
+            del workspace
+            gc.collect()
+            self.assertNotIn(key, HistoryStore._lock_registry)
+
+    def test_symlink_and_realpath_share_history_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            real = Path(directory) / "real"
+            real.mkdir()
+            link = Path(directory) / "link"
+            link.symlink_to(real)
+            ws_real = Workspace(real, clock=self.fixed_clock)
+            ws_link = Workspace(link, clock=self.fixed_clock)
+            self.assertIs(ws_real._history._history_lock, ws_link._history._history_lock)
 
 
 if __name__ == "__main__":

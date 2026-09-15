@@ -454,14 +454,59 @@ class SessionTests(unittest.TestCase):
             self.assertIsNone(FakeSession.created[0].workspace_root)
 
     def test_resolved_workspace_key_collides_default_forms(self) -> None:
-        from amnesia_agent_kernel.workspace.paths import DEFAULT_WORKSPACE
+        from amnesia_agent_kernel.workspace.paths import resolve_root
 
         from amnesia_agent_local_server.session import resolved_workspace_key
 
-        default = str(DEFAULT_WORKSPACE)
+        default = str(resolve_root(None))
         self.assertEqual(resolved_workspace_key(None), default)
         self.assertEqual(resolved_workspace_key(""), default)
         self.assertEqual(resolved_workspace_key(None), resolved_workspace_key(""))
+
+    def test_resolved_workspace_key_collides_relative_absolute_and_symlink(self) -> None:
+        from amnesia_agent_local_server.session import resolved_workspace_key
+
+        with tempfile.TemporaryDirectory() as directory:
+            real = Path(directory) / "real-ws"
+            real.mkdir()
+            link = Path(directory) / "link-ws"
+            link.symlink_to(real)
+            abs_key = resolved_workspace_key(str(real))
+            self.assertEqual(resolved_workspace_key(str(link)), abs_key)
+            # Relative form of the same directory collides after resolve.
+            rel = Path("real-ws")
+            # Use chdir into parent so relative path resolves to real.
+            import os
+
+            previous = os.getcwd()
+            try:
+                os.chdir(directory)
+                self.assertEqual(resolved_workspace_key(str(rel)), abs_key)
+            finally:
+                os.chdir(previous)
+
+    def test_symlink_and_realpath_cannot_run_parallel_turns(self) -> None:
+        async def run() -> None:
+            with tempfile.TemporaryDirectory() as directory:
+                store = ConfigStore(directory)
+                real = Path(directory) / "real-ws"
+                real.mkdir()
+                link = Path(directory) / "link-ws"
+                link.symlink_to(real)
+                _write_config(store)
+                manager = SessionManager(store)
+                with patch("amnesia_agent_local_server.session.KernelSession", FakeSession):
+                    first = manager.start_turn("one", workspace_path=str(real))
+                    try:
+                        with self.assertRaises(TurnBusyError):
+                            manager.start_turn("two", workspace_path=str(link))
+                    finally:
+                        async with aclosing(first):
+                            async for _event in first:
+                                pass
+                    self.assertFalse(manager.active_turn)
+
+        asyncio.run(run())
 
     def test_same_path_second_turn_raises_409(self) -> None:
         async def run() -> None:

@@ -7,7 +7,11 @@ from pathlib import Path
 GAME = Path(__file__).parents[1] / "game"
 sys.path.insert(0, str(GAME))
 
-from home_config.store import ConfigError, RenpyConfigStore, default_config_dict  # noqa: E402
+from home_config.store import (
+    ConfigError,
+    RenpyConfigStore,
+    default_config_dict,
+)
 
 
 class RenpyConfigStoreTests(unittest.TestCase):
@@ -34,7 +38,9 @@ class RenpyConfigStoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             store = RenpyConfigStore(directory)
             store.path.write_text(
-                json.dumps({"language": "english", "recent_workspaces": [], "extra": 1}),
+                json.dumps(
+                    {"language": "english", "recent_workspaces": [], "extra": 1}
+                ),
                 encoding="utf-8",
             )
             with self.assertRaises(ConfigError):
@@ -48,13 +54,20 @@ class RenpyConfigStoreTests(unittest.TestCase):
             store.bump_recent("/tmp/b")
             config = store.load()
             paths = [Path(e.path) for e in config.recent_workspaces]
-            self.assertEqual(paths[0], Path("/tmp/b"))
-            self.assertIn(Path("/tmp/a"), paths)
+            self.assertEqual(paths[0], Path("/tmp/b").resolve())
+            self.assertIn(Path("/tmp/a").resolve(), paths)
 
     def test_no_separate_last_workspace_key(self) -> None:
         raw = default_config_dict()
         self.assertNotIn("last_workspace", raw)
         self.assertEqual(set(raw), {"language", "recent_workspaces"})
+
+    def test_atomic_write_sets_mode_0600(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = RenpyConfigStore(directory)
+            store.write_defaults()
+            mode = store.path.stat().st_mode & 0o777
+            self.assertEqual(mode, 0o600)
 
 
 if __name__ == "__main__":

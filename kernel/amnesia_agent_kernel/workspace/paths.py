@@ -17,14 +17,19 @@ HISTORY_FILENAME = re.compile(r"(?P<date>\d{4}-\d{2}-\d{2})\.jsonl")
 
 
 def resolve_root(root: str | os.PathLike[str] | None) -> Path:
-    if root is not None and (
-        isinstance(root, bool) or not isinstance(root, (str, os.PathLike))
-    ):
+    """Normalize a workspace root to a realpath for identity and lock keys.
+
+    Uses ``expanduser`` then ``resolve(strict=False)`` so relative and absolute
+    forms of the same path collide, and a symlink shares identity with its
+    target. Missing path components are accepted (``strict=False``).
+    """
+    if root is not None and (isinstance(root, bool) or not isinstance(root, (str, os.PathLike))):
         raise WorkspaceError(f"Invalid workspace root {root!r}")
     if root == "":
         raise WorkspaceError("Workspace root must not be empty")
     try:
-        return Path(root).expanduser().absolute() if root is not None else DEFAULT_WORKSPACE
+        path = Path(root).expanduser() if root is not None else DEFAULT_WORKSPACE
+        return path.resolve(strict=False)
     except (OSError, TypeError, ValueError) as e:
         raise WorkspaceError(f"Invalid workspace root {root!r}: {e}") from e
 
