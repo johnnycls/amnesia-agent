@@ -3,6 +3,9 @@
 default input_text = ""
 default settings_model = ""
 default settings_api_key = ""
+default settings_base_url = ""
+default settings_provider_params = "{}"
+default settings_language = "english"
 
 init python:
     from state.app import AppState

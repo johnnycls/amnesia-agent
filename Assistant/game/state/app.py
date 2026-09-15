@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import json
 import threading
 from typing import Any
 
 from api.client import ApiError, Client, TurnHandle, invoke
 from characters.loader import CharacterError, CharacterPack, load_all_characters
 from home_config.store import (
+    DEFAULT_LANGUAGE,
+    SUPPORTED_LANGUAGES,
     AssistantConfig,
     AssistantConfigStore,
     ConfigError,
@@ -28,6 +31,14 @@ try:
     import renpy  # type: ignore[import-not-found]
 except ImportError:
     renpy = None  # type: ignore[assignment]
+
+LANGUAGE_NAMES = {
+    "english": "English",
+    "schinese": "简体中文",
+    "tchinese": "繁體中文",
+    "japanese": "日本語",
+    "korean": "한국어",
+}
 
 
 class AppState:
@@ -60,6 +71,9 @@ class AppState:
 
         self.settings_model = ""
         self.settings_api_key = ""
+        self.settings_base_url = ""
+        self.settings_provider_params = "{}"
+        self.settings_language = DEFAULT_LANGUAGE
         self.settings_api_key_set = False
         self.provider_configured = False
 
@@ -105,6 +119,8 @@ class AppState:
         self.ready = True
         self.characters = packs
         self.assistant_config = assistant_config
+        self.settings_language = assistant_config.language
+        self._apply_language(assistant_config.language)
         self.error = ""
         self._apply_server_config(config, refresh=False)
         self._route_from_readiness(status_when_main="Ready")
@@ -466,6 +482,9 @@ class AppState:
         self._refresh()
 
     def load_config_form(self) -> None:
+        if self.assistant_config is not None:
+            self.settings_language = self.assistant_config.language
+            self._set_store("settings_language", self.settings_language)
         self.status = "Loading settings..."
         self._refresh()
 
@@ -484,9 +503,15 @@ class AppState:
         self.settings_model = str(config.get("model") or "")
         self.settings_api_key = ""
         self.settings_api_key_set = bool(config.get("api_key_set"))
+        self.settings_base_url = str(config.get("base_url") or "")
+        self.settings_provider_params = json.dumps(
+            config.get("provider_params") or {}, indent=2
+        )
         self.provider_configured = is_provider_configured(config)
         self._set_store("settings_model", self.settings_model)
         self._set_store("settings_api_key", self.settings_api_key)
+        self._set_store("settings_base_url", self.settings_base_url)
+        self._set_store("settings_provider_params", self.settings_provider_params)
         if refresh:
             if self.provider_configured:
                 if self.status.startswith("Loading") or self.status.startswith(
@@ -497,13 +522,21 @@ class AppState:
                 self.status = format_config_required_status(provider_config_gaps(config))
             self._refresh()
 
-    def save_config_form(self, model: str, api_key: str) -> None:
+    def save_config_form(
+        self,
+        language: str,
+        model: str,
+        api_key: str,
+        base_url: str,
+        provider_params_text: str,
+    ) -> None:
         if self.busy:
             self.status = "Cannot save config while the agent is busy."
             self._refresh()
             return
         model = (model or "").strip()
         api_key = api_key or ""
+        base_url = base_url if base_url is not None else ""
         if not model:
             self.status = "Model is required (no empty default)."
             self._refresh()
@@ -512,22 +545,44 @@ class AppState:
             self.status = "API key is required on first run (cannot leave blank)."
             self._refresh()
             return
-        payload: dict[str, Any] = {"model": model}
-        if api_key.strip():
-            payload["api_key"] = api_key.strip()
+        try:
+            provider_params = json.loads(provider_params_text or "{}")
+            if not isinstance(provider_params, dict):
+                raise ValueError("Provider params must be a JSON object")
+            if language not in SUPPORTED_LANGUAGES:
+                raise ValueError(f"Unsupported language: {language}")
+            payload: dict[str, Any] = {
+                "model": model,
+                "base_url": base_url,
+                "provider_params": provider_params,
+            }
+            if api_key.strip():
+                payload["api_key"] = api_key.strip()
+        except (ValueError, TypeError, json.JSONDecodeError) as error:
+            self.status = f"Invalid settings: {error}"
+            self._refresh()
+            return
         self.status = "Saving settings..."
         self._refresh()
 
         def work() -> None:
             try:
+                # Home store first (local, fail loud) — same order as renpy.
+                updated = self.config_store.set_language(language)
                 config = self.client.request_json("PUT", "/v1/config", payload)
-                invoke(self._config_saved, config)
+                invoke(self._config_saved, updated, config)
             except Exception as error:  # noqa: BLE001
                 invoke(self._config_failed, error)
 
         threading.Thread(target=work, name="assistant-cfg-save", daemon=True).start()
 
-    def _config_saved(self, config: dict[str, Any]) -> None:
+    def _config_saved(
+        self, assistant_config: AssistantConfig, config: dict[str, Any]
+    ) -> None:
+        self.assistant_config = assistant_config
+        self.settings_language = assistant_config.language
+        self._set_store("settings_language", self.settings_language)
+        self._apply_language(assistant_config.language)
         self._apply_server_config(config, refresh=False)
         if not self.provider_configured:
             self.page = "config"
@@ -541,6 +596,14 @@ class AppState:
         self.status = f"Config error: {error}"
         self.error = str(error)
         self._refresh()
+
+    def _apply_language(self, language: str) -> None:
+        if renpy is None:
+            return
+        renpy.change_language(None if language == "english" else language)
+
+    def language_display_name(self) -> str:
+        return LANGUAGE_NAMES.get(self.settings_language, "English")
 
     # --- quit ----------------------------------------------------------------
 

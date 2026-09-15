@@ -5,10 +5,11 @@ Ren'Py launcher (separate from [`renpy/`](../renpy/)).
 
 **Locked boot** (like renpy recent-workspace auto-enter): once provider creds and a
 character choice are complete, later launches skip setup and open **Main** directly.
-Persists `selected_character_id` in `~/.amnesia-agent-assistant/config.json`. Always
+Persists `selected_character_id` and `language` in
+`~/.amnesia-agent-assistant/config.json` (default language `english`). Always
 uses the default workspace (`~/.amnesia-agent`, by omitting `workspace_path`). Slim
-**Config** page for `model` + `api_key` via `GET`/`PUT /v1/config`. No workspace
-picker in v1.
+**Config** page for `model`, `api_key`, `base_url`, `provider_params` via
+`GET`/`PUT /v1/config`, plus UI language. No workspace picker in v1.
 
 ## Requirements
 
@@ -46,7 +47,7 @@ Assistant/game/
   api/          # HTTP JSON + SSE (Client, TurnHandle, ASSISTANT_STAGE)
   process/      # spawn / poll / shutdown local_server
   state/        # AppState + stage apply + readiness helpers
-  home_config/  # ~/.amnesia-agent-assistant/config.json (selected_character_id)
+  home_config/  # ~/.amnesia-agent-assistant/config.json (selected_character_id, language)
   characters/   # bundled packs (aurora, kai)
   screens/      # loading, config, character_select, main
   script.rpy / options.rpy
@@ -81,8 +82,12 @@ sprites and backgrounds are generated illustrations matching this direction (not
   still emits `expression` among `neutral` / `smile` / `think` only.
 - **Character Select**: saves `selected_character_id`, then **Main** if provider ok,
   else **Config**.
-- **Config save**: if selected character is still valid → apply + **Main**; else
-  **Character Select**. Cannot leave Config until model + API key are set.
+- **Config save**: model + API key still required; `base_url` may be empty (provider
+  default); `provider_params` is a JSON object (`{}` ok) — invalid JSON / non-object
+  fails in the UI; server **400** for secret-shaped keys is surfaced. Language is
+  written to Assistant home config and applied (`renpy.change_language`). If selected
+  character is still valid → apply + **Main**; else **Character Select**. Cannot leave
+  Config until model + API key are set.
 - **Reset** (Main / Character Select): Confirm → `POST /v1/workspace/create-or-reset`
   on the default workspace (hard wipe), re-PUT the current character `prompt.md`,
   clear message/choices, restore default bg/expression. Does **not** clear
@@ -103,6 +108,7 @@ cd Assistant && python -m unittest discover -t . -s tests -v
 
 ## v1 non-goals
 
-No STT, TTS, Live2D, character editor, voice, or workspace picker. Config is
-model + api_key only (other local_server fields can wait). Character choice is
-persisted; switching characters is still available from Main.
+No STT, TTS, Live2D, character editor, voice, or workspace picker. Config covers
+model, api_key, base_url, provider_params, and language (execution-limit knobs and
+other local_server fields can wait). Character choice and language are persisted;
+switching characters is still available from Main.

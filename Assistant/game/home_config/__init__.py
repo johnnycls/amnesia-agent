@@ -1,6 +1,8 @@
 """Assistant home JSON config (~/.amnesia-agent-assistant/config.json)."""
 
 from home_config.store import (
+    DEFAULT_LANGUAGE,
+    SUPPORTED_LANGUAGES,
     AssistantConfig,
     AssistantConfigStore,
     ConfigError,
@@ -8,6 +10,8 @@ from home_config.store import (
 )
 
 __all__ = [
+    "DEFAULT_LANGUAGE",
+    "SUPPORTED_LANGUAGES",
     "AssistantConfig",
     "AssistantConfigStore",
     "ConfigError",

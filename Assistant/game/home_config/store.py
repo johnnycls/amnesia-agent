@@ -10,7 +10,11 @@ from pathlib import Path
 from typing import Any, Final
 
 DEFAULT_CONFIG_DIR = Path.home() / ".amnesia-agent-assistant"
-_CONFIG_KEYS: Final[frozenset[str]] = frozenset({"selected_character_id"})
+DEFAULT_LANGUAGE: Final[str] = "english"
+SUPPORTED_LANGUAGES: Final[frozenset[str]] = frozenset(
+    {"english", "schinese", "tchinese", "japanese", "korean"}
+)
+_CONFIG_KEYS: Final[frozenset[str]] = frozenset({"selected_character_id", "language"})
 
 
 class ConfigError(RuntimeError):
@@ -24,10 +28,11 @@ class ConfigError(RuntimeError):
 @dataclass(frozen=True)
 class AssistantConfig:
     selected_character_id: str
+    language: str = DEFAULT_LANGUAGE
 
 
 def default_config_dict() -> dict[str, Any]:
-    return {"selected_character_id": ""}
+    return {"selected_character_id": "", "language": DEFAULT_LANGUAGE}
 
 
 class AssistantConfigStore:
@@ -76,7 +81,22 @@ class AssistantConfigStore:
             raise ConfigError(
                 f"selected_character_id must be a string, got {type(character_id).__name__}"
             )
-        updated = AssistantConfig(selected_character_id=character_id.strip())
+        config = self.load()
+        updated = AssistantConfig(
+            selected_character_id=character_id.strip(),
+            language=config.language,
+        )
+        self.save(updated)
+        return updated
+
+    def set_language(self, language: str) -> AssistantConfig:
+        if language not in SUPPORTED_LANGUAGES:
+            raise ConfigError(f"Unsupported language: {language!r}")
+        config = self.load()
+        updated = AssistantConfig(
+            selected_character_id=config.selected_character_id,
+            language=language,
+        )
         self.save(updated)
         return updated
 
@@ -120,8 +140,20 @@ class AssistantConfigStore:
                 f"selected_character_id must be a string, got {type(selected).__name__}",
                 path=str(self.path),
             )
-        return AssistantConfig(selected_character_id=selected.strip())
+        language = raw.get("language", DEFAULT_LANGUAGE)
+        if not isinstance(language, str) or language not in SUPPORTED_LANGUAGES:
+            raise ConfigError(
+                f"Invalid Assistant config language: {language!r}",
+                path=str(self.path),
+            )
+        return AssistantConfig(
+            selected_character_id=selected.strip(),
+            language=language,
+        )
 
     @staticmethod
     def _to_raw(config: AssistantConfig) -> dict[str, Any]:
-        return {"selected_character_id": config.selected_character_id}
+        return {
+            "selected_character_id": config.selected_character_id,
+            "language": config.language,
+        }

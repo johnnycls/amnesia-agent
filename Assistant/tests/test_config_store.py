@@ -13,6 +13,7 @@ GAME = Path(__file__).parents[1] / "game"
 sys.path.insert(0, str(GAME))
 
 from home_config.store import (
+    DEFAULT_LANGUAGE,
     AssistantConfigStore,
     ConfigError,
     default_config_dict,
@@ -25,6 +26,7 @@ class AssistantConfigStoreTests(unittest.TestCase):
             store = AssistantConfigStore(directory)
             config = store.load()
             self.assertEqual(config.selected_character_id, "")
+            self.assertEqual(config.language, DEFAULT_LANGUAGE)
             self.assertTrue(store.path.is_file())
             self.assertEqual(
                 json.loads(store.path.read_text(encoding="utf-8")),
@@ -37,8 +39,44 @@ class AssistantConfigStoreTests(unittest.TestCase):
             store.load()
             updated = store.set_selected_character("aurora")
             self.assertEqual(updated.selected_character_id, "aurora")
+            self.assertEqual(updated.language, DEFAULT_LANGUAGE)
             reloaded = store.load()
             self.assertEqual(reloaded.selected_character_id, "aurora")
+            self.assertEqual(reloaded.language, DEFAULT_LANGUAGE)
+
+    def test_set_language_persists_and_preserves_character(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = AssistantConfigStore(directory)
+            store.set_selected_character("kai")
+            updated = store.set_language("schinese")
+            self.assertEqual(updated.language, "schinese")
+            self.assertEqual(updated.selected_character_id, "kai")
+            reloaded = store.load()
+            self.assertEqual(reloaded.language, "schinese")
+            self.assertEqual(reloaded.selected_character_id, "kai")
+
+    def test_missing_language_defaults_english(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = AssistantConfigStore(directory)
+            store.path.write_text(
+                json.dumps({"selected_character_id": "aurora"}),
+                encoding="utf-8",
+            )
+            config = store.load()
+            self.assertEqual(config.language, "english")
+            self.assertEqual(config.selected_character_id, "aurora")
+
+    def test_unsupported_language_fails_loud(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = AssistantConfigStore(directory)
+            store.path.write_text(
+                json.dumps(
+                    {"selected_character_id": "", "language": "klingon"}
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaises(ConfigError):
+                store.load()
 
     def test_corrupt_json_fails_loud(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -51,7 +89,13 @@ class AssistantConfigStoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             store = AssistantConfigStore(directory)
             store.path.write_text(
-                json.dumps({"selected_character_id": "kai", "extra": 1}),
+                json.dumps(
+                    {
+                        "selected_character_id": "kai",
+                        "language": "english",
+                        "extra": 1,
+                    }
+                ),
                 encoding="utf-8",
             )
             with self.assertRaises(ConfigError):
@@ -61,11 +105,16 @@ class AssistantConfigStoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             store = AssistantConfigStore(directory)
             store.path.write_text(
-                json.dumps({"selected_character_id": 42}),
+                json.dumps({"selected_character_id": 42, "language": "english"}),
                 encoding="utf-8",
             )
             with self.assertRaises(ConfigError):
                 store.load()
+
+    def test_default_keys_include_language(self) -> None:
+        raw = default_config_dict()
+        self.assertEqual(set(raw), {"selected_character_id", "language"})
+        self.assertEqual(raw["language"], "english")
 
     @unittest.skipIf(
         os.name == "nt",
