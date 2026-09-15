@@ -1,8 +1,8 @@
-# Amnesia Agent Ren'Py frontend.
+# Amnesia Agent Ren'Py frontend entry.
 
-default active_tab = "chat"
 default input_text = ""
-default persistent.ui_language = "english"
+default import_path = ""
+default create_path = ""
 default settings_model = ""
 default settings_api_key = ""
 default settings_base_url = ""
@@ -10,6 +10,7 @@ default settings_provider_params = "{}"
 default settings_timeout = "1800"
 default settings_output_limit = "262144"
 default settings_context_limit = "1000"
+default settings_language = "english"
 default system_prompt_text = ""
 default memory_text = ""
 default history_dates = []
@@ -17,69 +18,21 @@ default history_selected_date = ""
 default history_content = "[]"
 
 init python:
-    import json
+    from state.app import AppState, localize
 
-    from agent_controller import AgentController, _localized
+    app = AppState()
 
-    LANGUAGE_NAMES = {
-        "english": "English",
-        "schinese": "简体中文",
-        "tchinese": "繁體中文",
-        "japanese": "日本語",
-        "korean": "한국어",
-    }
-
-    def set_ui_language(language):
-        if language not in LANGUAGE_NAMES:
+    def quit_action():
+        if app.busy:
+            app.status = localize("Cannot quit while the agent is busy.")
+            renpy.restart_interaction()
             return
-        persistent.ui_language = language
-        renpy.change_language(None if language == "english" else language)
-        renpy.save_persistent()
-        renpy.restart_interaction()
+        app.quit_app()
 
-    def apply_saved_language():
-        language = getattr(persistent, "ui_language", "english")
-        if language not in LANGUAGE_NAMES:
-            language = "english"
-            persistent.ui_language = language
-        renpy.change_language(None if language == "english" else language)
-
-    def language_name():
-        return LANGUAGE_NAMES.get(
-            getattr(persistent, "ui_language", "english"), "English"
-        )
-
-    controller = AgentController()
-
-    def save_settings_action():
-        try:
-            provider_params = json.loads(settings_provider_params or "{}")
-            if not isinstance(provider_params, dict):
-                raise ValueError("Provider params must be a JSON object")
-            controller.save_settings(
-                {
-                    "model": settings_model,
-                    "api_key": settings_api_key,
-                    "base_url": settings_base_url,
-                    "provider_params": provider_params,
-                    "command_timeout_seconds": float(settings_timeout),
-                    "max_command_output_bytes": int(settings_output_limit),
-                    "max_context_message_chars": int(settings_context_limit),
-                }
-            )
-        except (ValueError, TypeError, json.JSONDecodeError) as error:
-            controller.status = _localized("Invalid settings: {error}", error=error)
-            controller._refresh()
-
-    def save_prompt_action():
-        controller.save_system_prompt(system_prompt_text)
-
-    def save_memory_action():
-        controller.save_memory(memory_text)
+    config.quit_action = Function(quit_action)
 
 label start:
-    $ apply_saved_language()
-    $ controller.start_async()
-    call screen agent_shell
-    $ controller.stop()
+    $ app.start_loading()
+    call screen app_shell
+    $ app.stop()
     return
