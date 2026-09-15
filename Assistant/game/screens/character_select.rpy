@@ -2,9 +2,12 @@ screen character_select_page():
     vbox:
         spacing 18
         text "Choose a character" size 28 bold True
-        text "Default workspace ~/.amnesia-agent · local server config unchanged" style "app_small"
-        if app.character is not None:
-            textbutton "Reset default workspace" action Function(app.reset_default_workspace) sensitive (not app.busy)
+        text "Default workspace ~/.amnesia-agent" style "app_small"
+        hbox:
+            spacing 12
+            textbutton "Config" action Function(app.go_config) sensitive (not app.busy)
+            if app.character is not None:
+                textbutton "Reset default workspace" action Function(app.reset_default_workspace) sensitive (not app.busy)
 
         hbox:
             spacing 28

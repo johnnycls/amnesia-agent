@@ -1,6 +1,8 @@
 # Assistant Ren'Py frontend entry.
 
 default input_text = ""
+default settings_model = ""
+default settings_api_key = ""
 
 init python:
     from state.app import AppState

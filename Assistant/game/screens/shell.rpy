@@ -32,5 +32,7 @@ screen app_shell():
                     use loading_page
                 elif app.page == "character_select":
                     use character_select_page
+                elif app.page == "config":
+                    use config_page
                 else:
                     text "Unknown page" style "app_text"

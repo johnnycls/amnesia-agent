@@ -15,6 +15,7 @@ screen main_page():
         hbox:
             spacing 16
             textbutton "Characters" action Function(app.go_character_select)
+            textbutton "Config" action Function(app.go_config) sensitive (not app.busy)
             textbutton "Reset" action Function(app.reset_default_workspace) sensitive (not app.busy and app.character is not None)
             if app.character:
                 text app.character.display_name style "app_small" yalign 0.5

@@ -1,4 +1,4 @@
-"""Assistant application state: Loading → Character Select → Main."""
+"""Assistant application state: Loading → Config (if needed) → Character Select → Main."""
 
 from __future__ import annotations
 
@@ -9,6 +9,11 @@ from api.client import ApiError, Client, TurnHandle, invoke
 from characters.loader import CharacterError, CharacterPack, load_all_characters
 from process.lifecycle import ServerProcess
 
+from state.config_gate import (
+    format_config_required_status,
+    is_provider_configured,
+    provider_config_gaps,
+)
 from state.stage import apply_stage
 
 try:
@@ -43,6 +48,12 @@ class AppState:
         self.turn_handle: TurnHandle | None = None
         self.input_text = ""
 
+        self.settings_model = ""
+        self.settings_api_key = ""
+        self.settings_api_key_set = False
+        self.provider_configured = False
+        self.config_return_page = "character_select"
+
     # --- bootstrap / loading -------------------------------------------------
 
     def start_loading(self) -> None:
@@ -65,7 +76,8 @@ class AppState:
                     raise CharacterError(
                         f"Expected at least two character packs, found {len(packs)}"
                     )
-                invoke(self._loading_ok, packs)
+                config = self.client.request_json("GET", "/v1/config")
+                invoke(self._loading_ok, packs, config)
             except (ApiError, CharacterError, OSError) as error:
                 invoke(self._loading_failed, error)
             except Exception as error:  # noqa: BLE001
@@ -73,13 +85,20 @@ class AppState:
 
         threading.Thread(target=work, name="assistant-loading", daemon=True).start()
 
-    def _loading_ok(self, packs: list[CharacterPack]) -> None:
+    def _loading_ok(self, packs: list[CharacterPack], config: dict[str, Any]) -> None:
         self.starting = False
         self.ready = True
         self.characters = packs
-        self.status = "Ready"
         self.error = ""
-        self.page = "character_select"
+        self._apply_server_config(config, refresh=False)
+        if self.provider_configured:
+            self.page = "character_select"
+            self.status = "Ready"
+        else:
+            self.config_return_page = "character_select"
+            self.page = "config"
+            gaps = provider_config_gaps(config)
+            self.status = format_config_required_status(gaps)
         self._refresh()
 
     def _loading_failed(self, error: Exception) -> None:
@@ -93,6 +112,9 @@ class AppState:
 
     def select_character(self, character_id: str) -> None:
         if self.busy or not self.ready:
+            return
+        if not self.provider_configured:
+            self._force_config("Set model and API key before selecting a character.")
             return
         pack = next((c for c in self.characters if c.id == character_id), None)
         if pack is None:
@@ -195,6 +217,9 @@ class AppState:
     def send(self, text: str) -> None:
         text = text.strip()
         if not text or not self.ready or self.busy or self.character is None:
+            return
+        if not self.provider_configured:
+            self._force_config("Set model and API key before starting a turn.")
             return
         self.input_text = ""
         self._set_store("input_text", "")
@@ -310,6 +335,134 @@ class AppState:
             "Warning"
         ):
             self.status = "Ready"
+        self._refresh()
+
+    # --- config --------------------------------------------------------------
+
+    def go_config(self) -> None:
+        if self.busy:
+            self.status = "Cannot open config while busy."
+            self._refresh()
+            return
+        if self.page in ("character_select", "main", "config"):
+            self.config_return_page = (
+                self.page if self.page != "config" else self.config_return_page
+            )
+        else:
+            self.config_return_page = "character_select"
+        self.page = "config"
+        self.load_config_form()
+        self._refresh()
+
+    def leave_config(self) -> None:
+        if not self.provider_configured:
+            self.status = format_config_required_status(
+                provider_config_gaps(
+                    {
+                        "model": self.settings_model,
+                        "api_key_set": self.settings_api_key_set,
+                    }
+                )
+            )
+            self._refresh()
+            return
+        target = self.config_return_page or "character_select"
+        if target == "main" and self.character is None:
+            target = "character_select"
+        self.page = target
+        self.status = "Ready" if target != "main" else self.status
+        if target == "character_select":
+            self.status = "Select a character"
+        self._refresh()
+
+    def _force_config(self, reason: str) -> None:
+        self.config_return_page = self.page if self.page != "config" else self.config_return_page
+        self.page = "config"
+        self.status = reason
+        self.load_config_form()
+        self._refresh()
+
+    def load_config_form(self) -> None:
+        self.status = "Loading settings..."
+        self._refresh()
+
+        def work() -> None:
+            try:
+                config = self.client.request_json("GET", "/v1/config")
+                invoke(self._apply_server_config, config)
+            except Exception as error:  # noqa: BLE001
+                invoke(self._config_failed, error)
+
+        threading.Thread(target=work, name="assistant-cfg-load", daemon=True).start()
+
+    def _apply_server_config(
+        self, config: dict[str, Any], *, refresh: bool = True
+    ) -> None:
+        self.settings_model = str(config.get("model") or "")
+        self.settings_api_key = ""
+        self.settings_api_key_set = bool(config.get("api_key_set"))
+        self.provider_configured = is_provider_configured(config)
+        self._set_store("settings_model", self.settings_model)
+        self._set_store("settings_api_key", self.settings_api_key)
+        if refresh:
+            if self.provider_configured:
+                if self.status.startswith("Loading") or self.status.startswith(
+                    "Configure required"
+                ):
+                    self.status = "Ready"
+            else:
+                self.status = format_config_required_status(provider_config_gaps(config))
+            self._refresh()
+
+    def save_config_form(self, model: str, api_key: str) -> None:
+        if self.busy:
+            self.status = "Cannot save config while the agent is busy."
+            self._refresh()
+            return
+        model = (model or "").strip()
+        api_key = api_key or ""
+        if not model:
+            self.status = "Model is required (no empty default)."
+            self._refresh()
+            return
+        if not api_key.strip() and not self.settings_api_key_set:
+            self.status = "API key is required on first run (cannot leave blank)."
+            self._refresh()
+            return
+        payload: dict[str, Any] = {"model": model}
+        if api_key.strip():
+            payload["api_key"] = api_key.strip()
+        self.status = "Saving settings..."
+        self._refresh()
+
+        def work() -> None:
+            try:
+                config = self.client.request_json("PUT", "/v1/config", payload)
+                invoke(self._config_saved, config)
+            except Exception as error:  # noqa: BLE001
+                invoke(self._config_failed, error)
+
+        threading.Thread(target=work, name="assistant-cfg-save", daemon=True).start()
+
+    def _config_saved(self, config: dict[str, Any]) -> None:
+        self._apply_server_config(config, refresh=False)
+        if not self.provider_configured:
+            self.page = "config"
+            self.status = format_config_required_status(provider_config_gaps(config))
+            self._refresh()
+            return
+        self.status = "Settings saved"
+        target = self.config_return_page or "character_select"
+        if target == "main" and self.character is None:
+            target = "character_select"
+        self.page = target
+        if target == "character_select":
+            self.status = "Settings saved — select a character"
+        self._refresh()
+
+    def _config_failed(self, error: Exception) -> None:
+        self.status = f"Config error: {error}"
+        self.error = str(error)
         self._refresh()
 
     # --- quit ----------------------------------------------------------------
