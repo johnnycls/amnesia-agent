@@ -3,30 +3,68 @@
 This directory is a normal Ren'Py project. Open it with the Ren'Py launcher and run the game.
 
 The project starts `amnesia-agent-local-server` as a child process and talks to it over
-`127.0.0.1:8765`. The Ren'Py side deliberately uses only Python's standard-library HTTP and
-SSE client; it does not import LiteLLM, FastAPI, or the kernel.
+`127.0.0.1:8765`. The Ren'Py side uses only Python's standard-library HTTP and SSE client; it
+does not import LiteLLM, FastAPI, or the kernel.
 
 ## Architecture
 
 ```text
-Ren'Py game
-  └─ AgentController      (game/agent_controller.py)
-       └─ LocalServerClient  (game/local_server_client.py)
-            └─ HTTP / SSE  →  amnesia-agent-local-server  →  amnesia-agent-kernel
+renpy/game/
+  api/        # HTTP JSON + SSE client (Client, TurnHandle, ANSWER_WITH_CHOICES)
+  home_config/ # ~/.amnesia-agent-renpy/config.json store
+  process/    # spawn / poll / shutdown local_server (sidecar or python -m)
+  state/      # AppState: pages, busy, workspace, last assistant, forms
+  defaults/   # packaged default system prompt string
+  screens/    # loading, workspace_select, main, workspace_settings, history, config
+  script.rpy / options.rpy / translations.rpy / fonts/
 ```
 
-- **`AgentController`** — Ren'Py-facing state controller. Manages chat messages,
-  streaming text, workspace reads, and settings. All I/O runs on background
-  threads; callbacks dispatch to the Ren'Py main thread via
-  `renpy.invoke_in_main_thread()`.
-- **`LocalServerClient`** — standard-library HTTP client (`urllib.request`). Starts
-  the server child process, polls `/v1/health` with a 15-second timeout, streams
-  turns via SSE, and verifies the server's `instance_id` on startup to detect port
-  conflicts.
+`game/server/` is reserved for the **CI-built native sidecar executable** (gitignored). Process
+lifecycle code lives in `process/` so it does not collide with that directory.
+
+## Pages / flow
+
+1. **Loading** — load Ren'Py config (fail loud if corrupt); spawn local_server; poll `/v1/health`.
+2. **Workspace Select** — recent list (open / delete); Import and Create use an OS
+   folder picker (no free-text path).
+   - Import: pick folder → `GET /v1/workspace/check` → if valid `setup-or-repair`; if not,
+     choose setup-or-repair or create-or-reset (soft reset).
+   - Create: pick folder → soft `create-or-reset`.
+   - On success: bump `recent_workspaces[].last_opened_at`, persist Ren'Py config, enter Main.
+3. **Auto-enter Main** when `recent_workspaces[0]` exists and check passes (then setup-or-repair).
+4. **Main** — Back; Workspace Settings; History; Config. Shows **only the last assistant
+   message**. Choice buttons when present. Input disabled while busy. `POST /v1/turn` with
+   `workspace_path` and default `answer_with_choices` `response_format`. Cancel disconnects SSE.
+5. **Workspace Settings** — system prompt / memory read+update. Reset prompt writes the
+   **packaged Ren'Py default string** (not a server soft-reset endpoint). No history here.
+6. **History** — list dates, read one day as `role: msg time` lines, delete one day via
+   `PUT /v1/workspace/history` with empty `messages` (removes that day's JSONL), clear all via
+   `POST /v1/workspace/history/reset`. Always pass `workspace_path`.
+7. **Config** — single form. Save routes:
+   - local_server fields → `PUT /v1/config`
+   - Ren'Py `language` → home JSON (`recent_workspaces` managed on Workspace Select)
+   - Reset local server → `POST /v1/config/reset`
+   - Reset Ren'Py → rewrite home JSON defaults (`language=english`, `recent_workspaces=[]`)
+8. **Quit** — blocked while busy; when idle: `POST /v1/shutdown` then exit.
+
+## Ren'Py config schema
+
+Path: `~/.amnesia-agent-renpy/config.json`
+
+```json
+{
+  "language": "english",
+  "recent_workspaces": [
+    {"path": "/absolute/or/~/path", "last_opened_at": "2026-09-15T12:00:00+00:00"}
+  ]
+}
+```
+
+- `language`: `english` | `schinese` | `tchinese` | `japanese` | `korean`
+- `recent_workspaces`: sorted descending by `last_opened_at` (no separate `last_workspace`)
+- Missing file → lazy defaults. Corrupt / unexpected keys → fail loud (no silent repair).
 
 ## Development setup
-
-Install the server into the Python interpreter that should run beside Ren'Py:
 
 ```text
 pip install ./kernel
@@ -34,55 +72,38 @@ pip install ./local_server
 ```
 
 The client launches `python -m amnesia_agent_local_server` by default. Set
-`AMNESIA_AGENT_PYTHON` if the server must use a specific Python executable:
+`AMNESIA_AGENT_PYTHON` if the server must use a specific Python executable.
 
-```text
-AMNESIA_AGENT_PYTHON=/path/to/python
-```
-
-On Windows, configure the equivalent environment variable in the shell that starts Ren'Py.
-
-The local server owns configuration at `~/.amnesia-agent-local-server/config.json`; its kernel
-workspace remains at `~/.amnesia-agent/`. The Ren'Py project currently provides functional default
-screens for chat, settings, system prompt, memory, and history.
+Local server config remains at `~/.amnesia-agent-local-server/config.json`. Workspace roots are
+chosen per open (default kernel path is still `~/.amnesia-agent` when omitted on the server).
 
 ## Languages and fonts
 
-The interface includes English, Simplified Chinese, Traditional Chinese, Japanese, and Korean.
-Choose a language from **Settings > Interface language**; the selection is saved in Ren'Py's
-persistent data. Model responses and workspace contents are not translated, so they can use any
-language supported by the configured provider.
+English, Simplified Chinese, Traditional Chinese, Japanese, and Korean. Language is stored in
+the Ren'Py home JSON (Config page). Model responses and workspace contents are not translated.
 
-The project bundles `game/fonts/NotoSansCJKsc-Regular.otf` and applies it to the default Ren'Py
-style. This is intentional: the default Ren'Py font does not reliably contain CJK glyphs, and
-switching the interface language without a CJK-capable font produces missing-character boxes.
-The font is Noto Sans CJK SC, distributed under the SIL Open Font License 1.1; the license text is
-included as `game/fonts/OFL.txt`. Keep both files when redistributing the game. If you replace the
-font, use one with coverage for every language you keep enabled.
+The project bundles `game/fonts/NotoSansCJKsc-Regular.otf` (SIL OFL 1.1; see `game/fonts/OFL.txt`)
+and applies it as the default style font so CJK glyphs render.
 
 ## Distribution
 
-The GitHub Actions workflow builds native Windows, macOS, and Linux distributions with Ren'Py
-8.5.3. Each distribution contains a platform-native `amnesia-agent-local-server` sidecar under
-`game/server` (built with `scripts/build-sidecar.py`); the client automatically prefers that
-executable when it is present. The `AMNESIA_AGENT_PYTHON` override and
-`python -m amnesia_agent_local_server` fallback remain available for local development.
+GitHub Actions builds Windows / macOS / Linux distributions with Ren'Py 8.5.3. Each ship a
+platform-native `amnesia-agent-local-server` under `game/server` via `scripts/build-sidecar.py`.
+The client prefers that executable when present; `AMNESIA_AGENT_PYTHON` / `python -m` remain for
+local development.
 
-The server is intentionally loopback-only and executes the kernel's unrestricted bash tool, so
-both the packaged game and the development setup should only be run on a trusted desktop.
+The server is loopback-only and runs the kernel's unrestricted bash tool — use only on a trusted
+desktop.
 
 ## Troubleshooting
 
-**Server won't start** — Ensure `amnesia-agent-local-server` is installed in the Python
-interpreter Ren'Py uses. Set `AMNESIA_AGENT_PYTHON` to point to the correct executable.
+**Server won't start** — Install `amnesia-agent-local-server` for the Python Ren'Py uses, or set
+`AMNESIA_AGENT_PYTHON`.
 
-**Port conflict** — The server binds to `127.0.0.1:8765` by default. If another process is
-using that port, stop it or change the server's `--port` flag (requires editing the
-`LocalServerClient` startup arguments).
+**Port conflict** — Default `127.0.0.1:8765`. Another process on that port fails loud via
+`instance_id` mismatch.
 
-**Missing characters (boxes)** — The bundled CJK font covers all five interface languages. If
-you replaced it, ensure the replacement has coverage for every enabled language.
+**Corrupt Ren'Py config** — Fix or delete `~/.amnesia-agent-renpy/config.json`, or use
+**Reset Ren'Py settings** on the Config page.
 
-**Health check timeout** — The client polls `/v1/health` for up to 15 seconds. If the server
-takes longer to start (e.g. first-run pip installs), increase the timeout or pre-install
-dependencies.
+**Health timeout** — Client polls `/v1/health` up to 15 seconds after spawn.

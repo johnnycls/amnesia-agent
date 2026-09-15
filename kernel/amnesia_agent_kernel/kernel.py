@@ -59,10 +59,10 @@ class KernelSession:
 
     @staticmethod
     def create_or_reset_workspace(root: str | os.PathLike[str] | None = None) -> None:
-        """Wipe ``root`` if it is a directory, then recreate empty prompt/memory.
+        """Soft-reset: empty prompt/memory, clear ``history/``; keep other files.
 
-        A missing root is treated as already clear. A non-directory path raises
-        ``WorkspaceError``.
+        Missing root is created. An existing directory is kept (not wiped). A
+        non-directory path raises ``WorkspaceError``.
         """
         workspace_api.create_or_reset_workspace(root)
 

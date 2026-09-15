@@ -138,10 +138,12 @@ resolves to `~/.amnesia-agent`):
 2. `KernelSession.setup_or_repair_workspace(root=None) -> None` — mkdir parents;
    create empty prompt/memory files if missing. Does **not** wipe existing content
    and does **not** delete `history/`.
-3. `KernelSession.create_or_reset_workspace(root=None) -> None` — if `root` exists
-   and is a directory, `shutil.rmtree` it; if missing, treat as clear; if it
-   exists and is not a directory, raise `WorkspaceError`; then run setup/repair
-   to recreate empty prompt/memory files.
+3. `KernelSession.create_or_reset_workspace(root=None) -> None` — soft reset: if
+   `root` is missing, mkdir parents; if it exists as a directory, keep it (do
+   **not** `rmtree` the root); if it exists and is not a directory, raise
+   `WorkspaceError`. Always overwrite `system_prompt.md` and `memory.md` with
+   empty strings, and clear `history/` (same rules as `reset_history`). Leave
+   all other files/dirs under the workspace untouched.
 
 Suggested frontend flow: **open → `check_workspace`; if ok, construct
 `KernelSession`; if not, let the user choose repair (`setup_or_repair_workspace`)
@@ -180,8 +182,11 @@ instead.
 
 `reset_system_prompt` and `reset_memory` remain removed.
 
-History input and persisted records are validated as role messages only (`system`,
-`user`, `assistant`, `tool`). Empty valid sequences remove a history file;
+History input and persisted records are validated as role messages (`system`,
+`user`, `assistant`, `tool`). Each persisted line may include an optional
+`timestamp` string (ISO-8601 UTC, e.g. `2026-09-15T08:55:01+00:00`) stamped by
+the store on append/update when missing; callers' message objects are never
+mutated. Empty valid sequences remove a history file (no leftover empty JSONL);
 malformed inputs raise `WorkspaceError` without deleting it. Kind/sidecar history
 events are no longer accepted.
 

@@ -185,7 +185,7 @@ expanduser in the kernel). Invalid roots fail loud as `WorkspaceError` → HTTP
 ```text
 GET  /v1/workspace/check?workspace_path=...                → {"ok": true|false}
 POST /v1/workspace/setup-or-repair   {"workspace_path"?}   → create missing dir / empty prompt+memory
-POST /v1/workspace/create-or-reset   {"workspace_path"?}   → wipe workspace root, recreate empty files
+POST /v1/workspace/create-or-reset   {"workspace_path"?}   → soft reset: empty prompt/memory, clear history/; keep other files
 
 GET  /v1/workspace/system-prompt?workspace_path=...        → {"content":"..."}
 PUT  /v1/workspace/system-prompt     {"content","workspace_path"?}

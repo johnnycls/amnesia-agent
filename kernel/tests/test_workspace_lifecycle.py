@@ -84,7 +84,7 @@ class WorkspaceLifecycleTests(unittest.TestCase):
             self.assertFalse((root / "history").exists())
             self.assertTrue(check_workspace(root))
 
-    def test_create_or_reset_wipes_then_empty_files(self) -> None:
+    def test_create_or_reset_soft_empties_prompt_memory_and_history(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = self._seed_workspace(directory)
             result = create_or_reset_workspace(root)
@@ -100,6 +100,24 @@ class WorkspaceLifecycleTests(unittest.TestCase):
             self.assertTrue(missing.is_dir())
             self.assertEqual((missing / "system_prompt.md").read_text(encoding="utf-8"), "")
             self.assertEqual((missing / "memory.md").read_text(encoding="utf-8"), "")
+
+    def test_create_or_reset_preserves_extra_workspace_files(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = self._seed_workspace(directory)
+            extra = root / "notes.txt"
+            extra.write_text("keep-me", encoding="utf-8")
+            nested = root / "assets" / "image.png"
+            nested.parent.mkdir()
+            nested.write_bytes(b"png")
+
+            create_or_reset_workspace(root)
+
+            self.assertEqual((root / "system_prompt.md").read_text(encoding="utf-8"), "")
+            self.assertEqual((root / "memory.md").read_text(encoding="utf-8"), "")
+            self.assertFalse((root / "history").exists())
+            self.assertEqual(extra.read_text(encoding="utf-8"), "keep-me")
+            self.assertEqual(nested.read_bytes(), b"png")
+            self.assertTrue(check_workspace(root))
 
     def test_create_or_reset_rejects_non_directory_root(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

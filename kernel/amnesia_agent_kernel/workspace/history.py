@@ -7,6 +7,7 @@ import stat
 import tempfile
 import threading
 from collections.abc import Sequence
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, ClassVar, cast
 
@@ -50,6 +51,20 @@ class HistoryStore:
             raise
         except Exception as e:
             raise WorkspaceError(f"Cannot determine current UTC date: {e}") from e
+
+    def _utc_timestamp(self) -> str:
+        """Return an ISO-8601 UTC timestamp from the store clock (e.g. ...+00:00)."""
+        try:
+            now = self._clock()
+        except Exception as e:
+            raise WorkspaceError(f"Cannot determine current UTC time: {e}") from e
+        if not isinstance(now, datetime):
+            raise WorkspaceError("Cannot determine current UTC time: clock must return datetime")
+        if now.tzinfo is None:
+            current = now.replace(tzinfo=timezone.utc)
+        else:
+            current = now.astimezone(timezone.utc)
+        return current.isoformat()
 
     def list_history(self) -> list[str]:
         """Return available daily history dates, newest first."""
@@ -95,6 +110,8 @@ class HistoryStore:
             value["content"], str
         ):
             raise ValueError(f"line {number} has invalid content")
+        if "timestamp" in value and not isinstance(value["timestamp"], str):
+            raise ValueError(f"line {number} has an invalid timestamp")
         if role == "tool" and (
             not isinstance(value.get("tool_call_id"), str) or not value["tool_call_id"]
         ):
@@ -127,7 +144,7 @@ class HistoryStore:
                 raise WorkspaceError(f"Cannot read history {path}: {e}", path=str(path)) from e
 
     @staticmethod
-    def _serialize_history(messages: Sequence[AllMessageValues]) -> str:
+    def _serialize_history(messages: Sequence[dict[str, Any]]) -> str:
         try:
             validated = [
                 HistoryStore._validate_history_record(message, number)
@@ -136,6 +153,27 @@ class HistoryStore:
             return "".join(json.dumps(message, allow_nan=False) + "\n" for message in validated)
         except (TypeError, ValueError, OverflowError) as e:
             raise WorkspaceError(f"Cannot serialize history: {e}") from e
+
+    def _stamp_missing_timestamps(
+        self, messages: Sequence[AllMessageValues]
+    ) -> list[dict[str, Any]]:
+        """Return copies with UTC timestamps for messages that lack one.
+
+        Does not mutate caller list items. Messages that already have a
+        ``timestamp`` key are left unchanged (validation still applies later).
+        Works on plain ``dict[str, Any]`` copies so stamping does not go through
+        ``AllMessageValues`` TypedDict key assignment.
+        """
+        stamped: list[dict[str, Any]] = []
+        for message in messages:
+            if isinstance(message, dict) and "timestamp" not in message:
+                copied: dict[str, Any] = dict(message)
+                copied["timestamp"] = self._utc_timestamp()
+                stamped.append(copied)
+            else:
+                # Already stamped (or non-dict): do not mutate the caller object.
+                stamped.append(cast(dict[str, Any], message))
+        return stamped
 
     def update_history(
         self, messages: Sequence[AllMessageValues], date: str | None = None
@@ -147,12 +185,13 @@ class HistoryStore:
         with self._history_lock:
             try:
                 if not messages:
+                    # Empty write deletes the daily file (no leftover empty jsonl).
                     path.unlink(missing_ok=True)
                     if path.parent.is_dir() and not any(path.parent.iterdir()):
                         path.parent.rmdir()
                     return
                 path.parent.mkdir(parents=True, exist_ok=True)
-                content = self._serialize_history(messages)
+                content = self._serialize_history(self._stamp_missing_timestamps(messages))
                 self._atomic_replace(path, content)
             except WorkspaceError as e:
                 if e.path is None:
@@ -180,9 +219,15 @@ class HistoryStore:
                     pass
 
     def append_history(self, message: AllMessageValues) -> None:
+        """Persist a stamped copy of ``message``; never mutate the caller's object."""
         path = history_path(self.root, self._today())
+        if isinstance(message, dict):
+            persisted: dict[str, Any] = dict(message)
+            persisted["timestamp"] = self._utc_timestamp()
+        else:
+            persisted = cast(dict[str, Any], message)
         try:
-            content = self._serialize_history([message])
+            content = self._serialize_history([persisted])
         except WorkspaceError as e:
             raise WorkspaceError(str(e), path=str(path)) from e
         with self._history_lock:

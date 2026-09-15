@@ -1,7 +1,6 @@
 """Kernel-owned persistent workspace state."""
 
 import os
-import shutil
 import stat
 from collections.abc import Callable, Sequence
 from datetime import datetime, timezone
@@ -48,24 +47,27 @@ def setup_or_repair_workspace(root: str | os.PathLike[str] | None = None) -> Non
 
 
 def create_or_reset_workspace(root: str | os.PathLike[str] | None = None) -> None:
-    """Wipe ``root`` if it is a directory, then recreate empty prompt/memory files.
+    """Soft-reset a workspace: empty prompt/memory, clear ``history/``, keep other files.
 
-    A missing root is treated as already clear. A path that exists but is not a
-    directory raises ``WorkspaceError``.
+    - Missing root: create the directory (parents as needed).
+    - Existing directory: keep it (do not ``rmtree`` the root).
+    - Existing non-directory: raise ``WorkspaceError``.
+    - Always overwrite ``system_prompt.md`` and ``memory.md`` with ``""``.
+    - Clear ``history/`` via the same rules as ``HistoryStore.reset_history``.
+    - Leave all other files and directories under the workspace untouched.
     """
     path = resolve_root(root)
     try:
         try:
             root_mode = path.stat().st_mode
         except FileNotFoundError:
-            pass
+            path.mkdir(parents=True, exist_ok=True)
         else:
             if not stat.S_ISDIR(root_mode):
                 raise WorkspaceError(
                     f"Workspace root is not a directory: {path}",
                     path=str(path),
                 )
-            shutil.rmtree(path)
     except WorkspaceError:
         raise
     except OSError as e:
@@ -73,7 +75,9 @@ def create_or_reset_workspace(root: str | os.PathLike[str] | None = None) -> Non
             f"Cannot reset workspace {path}: {e}",
             path=str(path),
         ) from e
-    workspace_files.setup_workspace_files(path)
+    workspace_files.write_text(path, "system_prompt.md", "")
+    workspace_files.write_text(path, "memory.md", "")
+    HistoryStore(path, lambda: datetime.now(timezone.utc)).reset_history()
 
 
 class Workspace:
@@ -98,7 +102,7 @@ class Workspace:
         workspace_files.setup_workspace_files(self.root)
 
     def create_or_reset(self) -> None:
-        """Wipe this workspace root under the history lock, then empty setup."""
+        """Soft-reset under the history lock: empty prompt/memory, clear history/."""
         with self._history._history_lock:
             create_or_reset_workspace(self.root)
 
