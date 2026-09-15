@@ -9,17 +9,12 @@ permissions:
   contents: read
   pull-requests: read
 
-env:
-  RENPY_VERSION: "8.5.3"
-  RENPY_SDK_URL: https://www.renpy.org/dl/8.5.3/renpy-8.5.3-sdk.zip
-
 jobs:
   changes:
     runs-on: ubuntu-latest
     outputs:
       kernel: ${{ steps.select.outputs.kernel }}
       local_server: ${{ steps.select.outputs.local_server }}
-      renpy: ${{ steps.select.outputs.renpy }}
       assistant: ${{ steps.select.outputs.assistant }}
       workflows: ${{ steps.select.outputs.workflows }}
     steps:
@@ -33,8 +28,6 @@ jobs:
               - 'kernel/**'
             local_server:
               - 'local_server/**'
-            renpy:
-              - 'renpy/**'
             assistant:
               - 'Assistant/**'
             workflows:
@@ -57,7 +50,6 @@ jobs:
           if [[ "$force_all" == "true" ]]; then
             set_out kernel true
             set_out local_server true
-            set_out renpy true
             set_out assistant true
             set_out workflows true
             exit 0
@@ -65,7 +57,6 @@ jobs:
 
           kernel="${{ steps.filter.outputs.kernel }}"
           local_server="${{ steps.filter.outputs.local_server }}"
-          renpy="${{ steps.filter.outputs.renpy }}"
           assistant="${{ steps.filter.outputs.assistant }}"
           workflows="${{ steps.filter.outputs.workflows }}"
 
@@ -76,7 +67,6 @@ jobs:
 
           set_out kernel "$kernel"
           set_out local_server "$local_server"
-          set_out renpy "$renpy"
           set_out assistant "$assistant"
           set_out workflows "$workflows"
 
@@ -146,24 +136,6 @@ jobs:
       - working-directory: local_server
         run: python -m unittest discover -t . -s tests -v
 
-  renpy-test:
-    needs: changes
-    if: needs.changes.outputs.renpy == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        python-version: ["3.10", "3.14"]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: ${{ matrix.python-version }}
-      - run: python -m pip install ./kernel ./local_server
-      - working-directory: renpy
-        run: python -m unittest discover -t . -s tests -v
-
   assistant-test:
     needs: changes
     if: needs.changes.outputs.assistant == 'true'
@@ -226,109 +198,6 @@ jobs:
           path: dist/local-server
           if-no-files-found: error
 
-  renpy-build:
-    needs: changes
-    if: needs.changes.outputs.renpy == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-latest
-            artifact: windows
-            package: win
-          - os: macos-latest
-            artifact: macos
-            package: mac
-          - os: ubuntu-latest
-            artifact: linux
-            package: linux
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
-      - run: python -m pip install ./kernel ./local_server pyinstaller
-      - name: Download Ren'Py SDK (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path .renpy-sdk | Out-Null
-          Invoke-WebRequest -Uri $env:RENPY_SDK_URL -OutFile .renpy-sdk/sdk.zip
-          Expand-Archive -Path .renpy-sdk/sdk.zip -DestinationPath .renpy-sdk -Force
-      - name: Download Ren'Py SDK (Unix)
-        if: runner.os != 'Windows'
-        shell: bash
-        run: |
-          mkdir -p .renpy-sdk
-          curl --fail --silent --show-error --location "$RENPY_SDK_URL" --output .renpy-sdk/sdk.zip
-          unzip -q .renpy-sdk/sdk.zip -d .renpy-sdk
-          chmod +x .renpy-sdk/renpy-"$RENPY_VERSION"-sdk/renpy.sh
-      - name: Build bundled local server
-        run: python renpy/scripts/build-sidecar.py --output-dir renpy/game/server
-      - name: Lint Ren'Py project (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        working-directory: renpy
-        run: |
-          $sdk = Join-Path $env:GITHUB_WORKSPACE ".renpy-sdk\renpy-$env:RENPY_VERSION-sdk"
-          $lint = Start-Process -FilePath (Join-Path $sdk "renpy.exe") -ArgumentList @(
-            (Join-Path $env:GITHUB_WORKSPACE "renpy"),
-            "lint"
-          ) -Wait -PassThru
-          if ($lint.ExitCode -ne 0) { exit $lint.ExitCode }
-      - name: Lint Ren'Py project (Unix)
-        if: runner.os != 'Windows'
-        shell: bash
-        working-directory: renpy
-        run: |
-          sdk="$GITHUB_WORKSPACE/.renpy-sdk/renpy-$RENPY_VERSION-sdk"
-          "$sdk/renpy.sh" "$GITHUB_WORKSPACE/renpy" lint
-      - name: Build Ren'Py distribution (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        working-directory: renpy
-        run: |
-          $sdk = Join-Path $env:GITHUB_WORKSPACE ".renpy-sdk\renpy-$env:RENPY_VERSION-sdk"
-          $destination = Join-Path $env:GITHUB_WORKSPACE "renpy\dist"
-          New-Item -ItemType Directory -Force -Path $destination | Out-Null
-          $build = Start-Process -FilePath (Join-Path $sdk "renpy.exe") -ArgumentList @(
-            (Join-Path $sdk "launcher"),
-            "distribute",
-            "--destination",
-            $destination,
-            "--package",
-            "${{ matrix.package }}",
-            (Join-Path $env:GITHUB_WORKSPACE "renpy")
-          ) -Wait -PassThru
-          if ($build.ExitCode -ne 0) { exit $build.ExitCode }
-          $files = @(Get-ChildItem -Path $destination -File)
-          if ($files.Count -eq 0) {
-            Write-Error "Ren'Py produced no files in $destination"
-            exit 1
-          }
-          $files | Format-Table FullName, Length -AutoSize
-      - name: Build Ren'Py distribution (Unix)
-        if: runner.os != 'Windows'
-        shell: bash
-        working-directory: renpy
-        run: |
-          sdk="$GITHUB_WORKSPACE/.renpy-sdk/renpy-$RENPY_VERSION-sdk"
-          destination="$GITHUB_WORKSPACE/renpy/dist"
-          mkdir -p "$destination"
-          "$sdk/renpy.sh" "$sdk/launcher" distribute --destination "$destination" --package "${{ matrix.package }}" "$GITHUB_WORKSPACE/renpy"
-          files=$(find "$destination" -maxdepth 1 -type f -print)
-          if [ -z "$files" ]; then
-            echo "Ren'Py produced no files in $destination" >&2
-            exit 1
-          fi
-          printf '%s\n' "$files"
-      - uses: actions/upload-artifact@v7
-        with:
-          name: amnesia-agent-renpy-${{ matrix.artifact }}
-          path: renpy/dist
-          if-no-files-found: error
-
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     needs:
@@ -337,10 +206,9 @@ jobs:
       - local-server-lint
       - kernel-test
       - local-server-test
-      - renpy-test
+      - assistant-test
       - kernel-build
       - local-server-build
-      - renpy-build
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -355,21 +223,6 @@ jobs:
         with:
           name: python-local-server-dist
           path: release-assets/local-server
-      - name: Download Ren'Py Windows artifact
-        uses: actions/download-artifact@v8
-        with:
-          name: amnesia-agent-renpy-windows
-          path: release-assets/renpy-windows
-      - name: Download Ren'Py macOS artifact
-        uses: actions/download-artifact@v8
-        with:
-          name: amnesia-agent-renpy-macos
-          path: release-assets/renpy-macos
-      - name: Download Ren'Py Linux artifact
-        uses: actions/download-artifact@v8
-        with:
-          name: amnesia-agent-renpy-linux
-          path: release-assets/renpy-linux
       - name: Package release assets
         shell: bash
         run: |
@@ -377,9 +230,6 @@ jobs:
           cd "$GITHUB_WORKSPACE/release-assets"
           zip -qr python-kernel-dist.zip kernel
           zip -qr python-local-server-dist.zip local-server
-          zip -qr amnesia-agent-renpy-windows.zip renpy-windows
-          zip -qr amnesia-agent-renpy-macos.zip renpy-macos
-          zip -qr amnesia-agent-renpy-linux.zip renpy-linux
           ls -l
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
@@ -392,6 +242,3 @@ jobs:
           files: |
             release-assets/python-kernel-dist.zip
             release-assets/python-local-server-dist.zip
-            release-assets/amnesia-agent-renpy-windows.zip
-            release-assets/amnesia-agent-renpy-macos.zip
-            release-assets/amnesia-agent-renpy-linux.zip
