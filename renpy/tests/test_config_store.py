@@ -47,9 +47,9 @@ class RenpyConfigStoreTests(unittest.TestCase):
             store.bump_recent("/tmp/a")
             store.bump_recent("/tmp/b")
             config = store.load()
-            paths = [e.path for e in config.recent_workspaces]
-            self.assertEqual(paths[0], "/tmp/b")
-            self.assertIn("/tmp/a", paths)
+            paths = [Path(e.path) for e in config.recent_workspaces]
+            self.assertEqual(paths[0], Path("/tmp/b"))
+            self.assertIn(Path("/tmp/a"), paths)
 
     def test_no_separate_last_workspace_key(self) -> None:
         raw = default_config_dict()

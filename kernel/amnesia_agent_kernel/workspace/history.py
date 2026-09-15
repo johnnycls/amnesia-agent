@@ -7,7 +7,6 @@ import stat
 import tempfile
 import threading
 from collections.abc import Sequence
-from copy import copy
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, ClassVar, cast
@@ -145,7 +144,7 @@ class HistoryStore:
                 raise WorkspaceError(f"Cannot read history {path}: {e}", path=str(path)) from e
 
     @staticmethod
-    def _serialize_history(messages: Sequence[AllMessageValues]) -> str:
+    def _serialize_history(messages: Sequence[dict[str, Any]]) -> str:
         try:
             validated = [
                 HistoryStore._validate_history_record(message, number)
@@ -157,20 +156,23 @@ class HistoryStore:
 
     def _stamp_missing_timestamps(
         self, messages: Sequence[AllMessageValues]
-    ) -> list[AllMessageValues]:
+    ) -> list[dict[str, Any]]:
         """Return copies with UTC timestamps for messages that lack one.
 
         Does not mutate caller list items. Messages that already have a
         ``timestamp`` key are left unchanged (validation still applies later).
+        Works on plain ``dict[str, Any]`` copies so stamping does not go through
+        ``AllMessageValues`` TypedDict key assignment.
         """
-        stamped: list[AllMessageValues] = []
+        stamped: list[dict[str, Any]] = []
         for message in messages:
             if isinstance(message, dict) and "timestamp" not in message:
-                copied = copy(message)
+                copied: dict[str, Any] = dict(message)
                 copied["timestamp"] = self._utc_timestamp()
-                stamped.append(cast(AllMessageValues, copied))
+                stamped.append(copied)
             else:
-                stamped.append(message)
+                # Already stamped (or non-dict): do not mutate the caller object.
+                stamped.append(cast(dict[str, Any], message))
         return stamped
 
     def update_history(
@@ -220,10 +222,10 @@ class HistoryStore:
         """Persist a stamped copy of ``message``; never mutate the caller's object."""
         path = history_path(self.root, self._today())
         if isinstance(message, dict):
-            persisted = copy(message)
+            persisted: dict[str, Any] = dict(message)
             persisted["timestamp"] = self._utc_timestamp()
         else:
-            persisted = message
+            persisted = cast(dict[str, Any], message)
         try:
             content = self._serialize_history([persisted])
         except WorkspaceError as e:
