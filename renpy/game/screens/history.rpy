@@ -24,4 +24,8 @@ screen history_page():
             scrollbars "vertical"
             text history_content style "app_small"
 
-        textbutton _("Clear all history") action Confirm(_("Clear all history?"), Function(app.clear_history))
+        hbox:
+            spacing 10
+            if history_selected_date:
+                textbutton _("Delete this day") action Confirm(_("Delete this day?"), Function(app.delete_history_day))
+            textbutton _("Clear all history") action Confirm(_("Clear all history?"), Function(app.clear_history))

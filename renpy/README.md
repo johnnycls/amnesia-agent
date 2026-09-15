@@ -37,8 +37,9 @@ lifecycle code lives in `process/` so it does not collide with that directory.
    `workspace_path` and default `answer_with_choices` `response_format`. Cancel disconnects SSE.
 5. **Workspace Settings** — system prompt / memory read+update. Reset prompt writes the
    **packaged Ren'Py default string** (not a server soft-reset endpoint). No history here.
-6. **History** — list dates, read one day, clear via `POST /v1/workspace/history/reset`.
-   Always pass `workspace_path`.
+6. **History** — list dates, read one day as `role: msg time` lines, delete one day via
+   `PUT /v1/workspace/history` with empty `messages` (removes that day's JSONL), clear all via
+   `POST /v1/workspace/history/reset`. Always pass `workspace_path`.
 7. **Config** — single form. Save routes:
    - local_server fields → `PUT /v1/config`
    - Ren'Py `language` → home JSON (`recent_workspaces` managed on Workspace Select)

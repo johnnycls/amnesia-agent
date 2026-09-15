@@ -111,7 +111,8 @@ class AgentTurnErrorTests(unittest.IsolatedAsyncioTestCase):
                     ]
             records = workspace.read_history()
         self.assertEqual(records[0]["role"], "user")
-        self.assertEqual(records[1], {"role": "assistant", "content": "partial"})
+        self.assertEqual(records[1]["role"], "assistant")
+        self.assertEqual(records[1]["content"], "partial")
         self.assertEqual(records[2]["role"], "user")
         self.assertIn("error: ProviderError:", records[2]["content"])
 
@@ -145,8 +146,10 @@ class AgentTurnErrorTests(unittest.IsolatedAsyncioTestCase):
                     await task
             records = workspace.read_history()
 
-        self.assertEqual(records[1], {"role": "assistant", "content": "partial"})
-        self.assertEqual(records[2], {"role": "user", "content": "user interrupted"})
+        self.assertEqual(records[1]["role"], "assistant")
+        self.assertEqual(records[1]["content"], "partial")
+        self.assertEqual(records[2]["role"], "user")
+        self.assertEqual(records[2]["content"], "user interrupted")
 
     async def test_falsey_history_input_is_rejected_without_deletion(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

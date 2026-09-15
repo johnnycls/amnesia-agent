@@ -182,8 +182,11 @@ instead.
 
 `reset_system_prompt` and `reset_memory` remain removed.
 
-History input and persisted records are validated as role messages only (`system`,
-`user`, `assistant`, `tool`). Empty valid sequences remove a history file;
+History input and persisted records are validated as role messages (`system`,
+`user`, `assistant`, `tool`). Each persisted line may include an optional
+`timestamp` string (ISO-8601 UTC, e.g. `2026-09-15T08:55:01+00:00`) stamped by
+the store on append/update when missing; callers' message objects are never
+mutated. Empty valid sequences remove a history file (no leftover empty JSONL);
 malformed inputs raise `WorkspaceError` without deleting it. Kind/sidecar history
 events are no longer accepted.
 

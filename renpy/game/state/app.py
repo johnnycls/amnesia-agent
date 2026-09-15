@@ -38,6 +38,32 @@ def localize(template: str, **values: Any) -> str:
     return template.format(**values)
 
 
+
+def format_history_messages(messages: Any) -> str:
+    """Format history messages as ``role: msg time`` lines for the History UI."""
+    if not isinstance(messages, list):
+        return ""
+    lines: list[str] = []
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        role = message.get("role", "")
+        if not isinstance(role, str):
+            role = str(role)
+        content = message.get("content", "")
+        if content is None:
+            text = ""
+        elif isinstance(content, str):
+            text = content
+        else:
+            text = str(content)
+        text = " ".join(text.split())
+        timestamp = message.get("timestamp")
+        time = timestamp if isinstance(timestamp, str) and timestamp else "—"
+        lines.append(f"{role}: {text} {time}")
+    return "\n".join(lines)
+
+
 class AppState:
     """Single source of UI state: page, busy, workspace, last assistant, status."""
 
@@ -67,7 +93,7 @@ class AppState:
         self.memory_text = ""
         self.history_dates: list[str] = []
         self.history_selected_date = ""
-        self.history_content = "[]"
+        self.history_content = ""
 
         self.settings_model = ""
         self.settings_api_key = ""
@@ -568,12 +594,50 @@ class AppState:
 
     def _apply_history_day(self, history: dict[str, Any]) -> None:
         self.history_selected_date = str(history.get("date", ""))
-        content = json.dumps(history.get("messages", []), indent=2)
+        content = format_history_messages(history.get("messages", []))
         self.history_content = content
         self._set_store("history_selected_date", self.history_selected_date)
         self._set_store("history_content", content)
         self.status = localize("History loaded")
         self._refresh()
+
+    def delete_history_day(self) -> None:
+        """Delete the selected day's JSONL via PUT empty messages (server unlinks file)."""
+        if not self.workspace_path or not self.history_selected_date:
+            return
+        if self.busy:
+            self._set_status("Cannot clear history while the agent is busy.")
+            return
+        selected = self.history_selected_date
+        self._set_status("Deleting history day...")
+
+        def work() -> None:
+            try:
+                self.client.request_json(
+                    "PUT",
+                    "/v1/workspace/history",
+                    {
+                        "messages": [],
+                        "date": selected,
+                        "workspace_path": self.workspace_path,
+                    },
+                )
+                invoke(self._history_day_deleted, selected)
+            except Exception as error:  # noqa: BLE001
+                invoke(self._workspace_failed, error)
+
+        threading.Thread(target=work, name="amnesia-hist-del-day", daemon=True).start()
+
+    def _history_day_deleted(self, deleted_date: str) -> None:
+        self.history_dates = [d for d in self.history_dates if d != deleted_date]
+        self.history_selected_date = ""
+        self.history_content = ""
+        self._set_store("history_dates", self.history_dates)
+        self._set_store("history_selected_date", "")
+        self._set_store("history_content", "")
+        self.status = localize("History day deleted")
+        self._refresh()
+        self.load_history_dates()
 
     def clear_history(self) -> None:
         if not self.workspace_path:
@@ -599,10 +663,10 @@ class AppState:
     def _history_cleared(self) -> None:
         self.history_dates = []
         self.history_selected_date = ""
-        self.history_content = "[]"
+        self.history_content = ""
         self._set_store("history_dates", [])
         self._set_store("history_selected_date", "")
-        self._set_store("history_content", "[]")
+        self._set_store("history_content", "")
         self.status = localize("History reset")
         self._refresh()
 

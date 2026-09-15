@@ -92,6 +92,15 @@ translate schinese strings:
     old "Delete"
     new "删除"
 
+    old "Delete this day"
+    new "删除此日"
+
+    old "Delete this day?"
+    new "删除此日的历史记录？"
+
+    old "Deleting history day..."
+    new "正在删除此日历史记录……"
+
     old "Error: {error}"
     new "错误：{error}"
 
@@ -100,6 +109,9 @@ translate schinese strings:
 
     old "History"
     new "历史记录"
+
+    old "History day deleted"
+    new "已删除该日历史记录"
 
     old "History loaded"
     new "历史记录已加载"
@@ -387,6 +399,15 @@ translate tchinese strings:
     old "Delete"
     new "刪除"
 
+    old "Delete this day"
+    new "刪除此日"
+
+    old "Delete this day?"
+    new "刪除此日的歷史記錄？"
+
+    old "Deleting history day..."
+    new "正在刪除此日歷史記錄……"
+
     old "Error: {error}"
     new "錯誤：{error}"
 
@@ -395,6 +416,9 @@ translate tchinese strings:
 
     old "History"
     new "歷史記錄"
+
+    old "History day deleted"
+    new "已刪除該日歷史記錄"
 
     old "History loaded"
     new "歷史記錄已載入"
@@ -682,6 +706,15 @@ translate japanese strings:
     old "Delete"
     new "削除"
 
+    old "Delete this day"
+    new "この日を削除"
+
+    old "Delete this day?"
+    new "この日の履歴を削除しますか？"
+
+    old "Deleting history day..."
+    new "この日の履歴を削除しています……"
+
     old "Error: {error}"
     new "エラー：{error}"
 
@@ -690,6 +723,9 @@ translate japanese strings:
 
     old "History"
     new "履歴"
+
+    old "History day deleted"
+    new "その日の履歴を削除しました"
 
     old "History loaded"
     new "履歴を読み込みました"
@@ -977,6 +1013,15 @@ translate korean strings:
     old "Delete"
     new "삭제"
 
+    old "Delete this day"
+    new "이 날짜 삭제"
+
+    old "Delete this day?"
+    new "이 날짜의 기록을 삭제할까요?"
+
+    old "Deleting history day..."
+    new "이 날짜의 기록을 삭제하는 중..."
+
     old "Error: {error}"
     new "오류: {error}"
 
@@ -985,6 +1030,9 @@ translate korean strings:
 
     old "History"
     new "기록"
+
+    old "History day deleted"
+    new "해당 날짜의 기록이 삭제되었습니다"
 
     old "History loaded"
     new "기록을 불러왔습니다"

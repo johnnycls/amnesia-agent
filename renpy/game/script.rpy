@@ -13,7 +13,7 @@ default system_prompt_text = ""
 default memory_text = ""
 default history_dates = []
 default history_selected_date = ""
-default history_content = "[]"
+default history_content = ""
 
 init python:
     from state.app import AppState, localize
