@@ -35,14 +35,13 @@ screen main_page():
 
         hbox:
             spacing 10
+            input:
+                value VariableInputValue("input_text")
+                xfill True
+                length 400
+                pixel_width 900
+                style "app_text"
             if app.busy:
-                text _("Input disabled while agent is busy.") style "app_small" yalign 0.5
+                textbutton _("Cancel") action Function(app.cancel)
             else:
-                input:
-                    value VariableInputValue("input_text")
-                    xfill True
-                    length 400
-                    pixel_width 900
-                    style "app_text"
-            textbutton _("Send") sensitive (not app.busy and app.ready) action Function(app.send, input_text)
-            textbutton _("Cancel") sensitive app.busy action Function(app.cancel)
+                textbutton _("Send") sensitive app.ready action Function(app.send, input_text)

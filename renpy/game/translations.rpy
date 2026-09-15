@@ -23,6 +23,9 @@ translate schinese strings:
     old "Cancelled"
     new "已取消"
 
+    old "Cancelling..."
+    new "正在取消……"
+
     old "Cannot leave while the agent is busy."
     new "智能体忙碌时无法离开。"
 
@@ -287,6 +290,9 @@ translate tchinese strings:
 
     old "Cancelled"
     new "已取消"
+
+    old "Cancelling..."
+    new "正在取消……"
 
     old "Cannot leave while the agent is busy."
     new "智能體忙碌時無法離開。"
@@ -553,6 +559,9 @@ translate japanese strings:
     old "Cancelled"
     new "キャンセルしました"
 
+    old "Cancelling..."
+    new "キャンセル中……"
+
     old "Cannot leave while the agent is busy."
     new "エージェント処理中は離れられません。"
 
@@ -817,6 +826,9 @@ translate korean strings:
 
     old "Cancelled"
     new "취소됨"
+
+    old "Cancelling..."
+    new "취소 중..."
 
     old "Cannot leave while the agent is busy."
     new "에이전트가 바쁠 때는 나갈 수 없습니다."

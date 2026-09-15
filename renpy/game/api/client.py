@@ -128,6 +128,9 @@ class Client:
         }
 
         def run() -> None:
+            # Always invoke on_complete unless on_error already handled the turn
+            # (including cancel: early return or socket close after handle.cancel).
+            need_complete = True
             request = Request(
                 self.base_url + "/v1/turn",
                 data=json.dumps(payload).encode("utf-8"),
@@ -146,14 +149,13 @@ class Client:
                             return
                         invoke(on_event, event)
                         if event.get("type") == "done":
-                            invoke(on_complete)
                             return
                         if event.get("type") == "error":
                             # Stream already delivered the error envelope.
-                            invoke(on_complete)
                             return
             except (HTTPError, URLError, OSError, SseError) as error:
                 if not handle.cancelled:
+                    need_complete = False
                     if isinstance(error, HTTPError):
                         invoke(on_error, ApiError(_http_error_detail(error)))
                     elif isinstance(error, SseError):
@@ -162,7 +164,11 @@ class Client:
                         invoke(on_error, ApiError(f"Turn request failed: {error}"))
             except Exception as error:  # noqa: BLE001 — surface to UI
                 if not handle.cancelled:
+                    need_complete = False
                     invoke(on_error, error)
+            finally:
+                if need_complete:
+                    invoke(on_complete)
 
         threading.Thread(target=run, name="amnesia-agent-turn", daemon=True).start()
         return handle

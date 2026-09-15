@@ -317,10 +317,7 @@ class AppState:
         self._refresh()
 
     def go_workspace_select(self) -> None:
-        if self.busy:
-            self.status = localize("Cannot leave while the agent is busy.")
-            self._refresh()
-            return
+        # Allow leave while busy; the turn keeps running in the background.
         self.page = "workspace_select"
         self._refresh()
 
@@ -349,14 +346,28 @@ class AppState:
         self.send(choice)
 
     def cancel(self) -> None:
-        if self.turn_handle is not None:
-            self.turn_handle.cancel()
-        self.turn_handle = None
+        # Only signal the stream to stop; busy clears in _on_complete / _on_error
+        # once the SSE thread finishes (socket close / cancelled loop exit).
+        if self.turn_handle is None:
+            return
+        self.turn_handle.cancel()
+        self.status = localize("Cancelling...")
+        self._refresh()
+
+    def _cancel_requested(self) -> bool:
+        return self.turn_handle is not None and self.turn_handle.cancelled
+
+    def _finish_cancelled(self) -> None:
         self.busy = False
+        self.turn_handle = None
         self.status = localize("Cancelled")
         self._refresh()
 
     def _on_event(self, event: dict[str, Any]) -> None:
+        # After cancel, ignore late delta/assistant UI updates; terminal
+        # done/error/complete still clear busy via _on_complete / _on_error.
+        if self._cancel_requested():
+            return
         event_type = event.get("type")
         data = event.get("data")
         if not isinstance(data, dict):
@@ -397,6 +408,10 @@ class AppState:
         self._refresh()
 
     def _on_error(self, error: Exception) -> None:
+        # Closing the socket on cancel often raises; treat as cancelled completion.
+        if self._cancel_requested():
+            self._finish_cancelled()
+            return
         self.turn_handle = None
         self.busy = False
         self.last_assistant_text = localize("Error: {error}", error=error)
@@ -405,6 +420,9 @@ class AppState:
         self._refresh()
 
     def _on_complete(self) -> None:
+        if self._cancel_requested():
+            self._finish_cancelled()
+            return
         self.busy = False
         self.turn_handle = None
         if self.status != localize("Request failed"):
