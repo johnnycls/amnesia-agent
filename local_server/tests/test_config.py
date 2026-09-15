@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -306,6 +307,10 @@ class ApiKeyUpdateTests(unittest.TestCase):
             self.assertEqual(response.status_code, 400)
             self.assertIn("api_key_clear", response.json()["detail"])
 
+    @unittest.skipIf(
+        os.name == "nt",
+        "NTFS ignores POSIX 0o600; st_mode & 0o777 stays 0o666 on Windows",
+    )
     def test_atomic_write_sets_mode_0600(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = ConfigStore(directory)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -126,7 +127,11 @@ class RenpyConfigStore:
             self.root.mkdir(parents=True, exist_ok=True)
             temporary.write_text(json.dumps(raw, indent=2) + "\n", encoding="utf-8")
             temporary.replace(self.path)
-            os.chmod(self.path, 0o600)
+            if os.name == "nt":
+                # NTFS ignores full POSIX modes; best-effort clear read-only only.
+                os.chmod(self.path, stat.S_IREAD | stat.S_IWRITE)
+            else:
+                os.chmod(self.path, 0o600)
         except OSError as error:
             try:
                 temporary.unlink(missing_ok=True)

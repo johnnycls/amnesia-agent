@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -62,6 +63,10 @@ class RenpyConfigStoreTests(unittest.TestCase):
         self.assertNotIn("last_workspace", raw)
         self.assertEqual(set(raw), {"language", "recent_workspaces"})
 
+    @unittest.skipIf(
+        os.name == "nt",
+        "NTFS ignores POSIX 0o600; st_mode & 0o777 stays 0o666 on Windows",
+    )
     def test_atomic_write_sets_mode_0600(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = RenpyConfigStore(directory)
