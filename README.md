@@ -50,7 +50,7 @@ plus one frontend:
 | [`kernel/`](kernel/) | Frontend-agnostic async agent kernel — the core. |
 | [`local_server/`](local_server/) | Reusable loopback FastAPI server for desktop frontends. |
 | [`renpy/`](renpy/) | Ren'Py client that launches the local server and streams agent events. |
-| [`Assistant/`](Assistant/) | Ren'Py character-stage client (Character Select → Main; default workspace). |
+| [`Assistant/`](Assistant/) | Ren'Py character-stage client (locked boot: Config/Character → Main; default workspace). |
 
 ## Project structure
 

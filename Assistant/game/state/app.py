@@ -1,4 +1,4 @@
-"""Assistant application state: Loading → Config (if needed) → Character Select → Main."""
+"""Assistant application state: Loading → Config / Character Select → Main (locked)."""
 
 from __future__ import annotations
 
@@ -7,11 +7,19 @@ from typing import Any
 
 from api.client import ApiError, Client, TurnHandle, invoke
 from characters.loader import CharacterError, CharacterPack, load_all_characters
+from home_config.store import (
+    AssistantConfig,
+    AssistantConfigStore,
+    ConfigError,
+)
 from process.lifecycle import ServerProcess
 
 from state.config_gate import (
     format_config_required_status,
+    is_boot_ready,
+    is_character_selected,
     is_provider_configured,
+    next_setup_page,
     provider_config_gaps,
 )
 from state.stage import apply_stage
@@ -28,6 +36,8 @@ class AppState:
     def __init__(self) -> None:
         self.client = Client()
         self.server = ServerProcess(self.client)
+        self.config_store = AssistantConfigStore()
+        self.assistant_config: AssistantConfig | None = None
 
         self.page = "loading"
         self.status = ""
@@ -52,7 +62,6 @@ class AppState:
         self.settings_api_key = ""
         self.settings_api_key_set = False
         self.provider_configured = False
-        self.config_return_page = "character_select"
 
     # --- bootstrap / loading -------------------------------------------------
 
@@ -76,30 +85,29 @@ class AppState:
                     raise CharacterError(
                         f"Expected at least two character packs, found {len(packs)}"
                     )
+                assistant_config = self.config_store.load()
                 config = self.client.request_json("GET", "/v1/config")
-                invoke(self._loading_ok, packs, config)
-            except (ApiError, CharacterError, OSError) as error:
+                invoke(self._loading_ok, packs, config, assistant_config)
+            except (ApiError, CharacterError, ConfigError, OSError) as error:
                 invoke(self._loading_failed, error)
             except Exception as error:  # noqa: BLE001
                 invoke(self._loading_failed, error)
 
         threading.Thread(target=work, name="assistant-loading", daemon=True).start()
 
-    def _loading_ok(self, packs: list[CharacterPack], config: dict[str, Any]) -> None:
+    def _loading_ok(
+        self,
+        packs: list[CharacterPack],
+        config: dict[str, Any],
+        assistant_config: AssistantConfig,
+    ) -> None:
         self.starting = False
         self.ready = True
         self.characters = packs
+        self.assistant_config = assistant_config
         self.error = ""
         self._apply_server_config(config, refresh=False)
-        if self.provider_configured:
-            self.page = "character_select"
-            self.status = "Ready"
-        else:
-            self.config_return_page = "character_select"
-            self.page = "config"
-            gaps = provider_config_gaps(config)
-            self.status = format_config_required_status(gaps)
-        self._refresh()
+        self._route_from_readiness(status_when_main="Ready")
 
     def _loading_failed(self, error: Exception) -> None:
         self.starting = False
@@ -108,22 +116,69 @@ class AppState:
         self.error = str(error)
         self._refresh()
 
-    # --- character select ----------------------------------------------------
+    # --- readiness routing ---------------------------------------------------
 
-    def select_character(self, character_id: str) -> None:
-        if self.busy or not self.ready:
+    def _available_character_ids(self) -> set[str]:
+        return {c.id for c in self.characters}
+
+    def _selected_character_id(self) -> str:
+        if self.assistant_config is None:
+            return ""
+        return self.assistant_config.selected_character_id
+
+    def _character_ok(self) -> bool:
+        return is_character_selected(
+            self._selected_character_id(), self._available_character_ids()
+        )
+
+    def _resolve_selected_pack(self) -> CharacterPack | None:
+        selected = self._selected_character_id()
+        if not selected:
+            return None
+        return next((c for c in self.characters if c.id == selected), None)
+
+    def _route_from_readiness(self, *, status_when_main: str) -> None:
+        """Send user to Main (apply character) or the next setup page."""
+        provider_ok = self.provider_configured
+        character_ok = self._character_ok()
+        if is_boot_ready(provider_ok=provider_ok, character_ok=character_ok):
+            pack = self._resolve_selected_pack()
+            if pack is None:
+                # Defensive: character_ok True implies pack exists.
+                self.page = "character_select"
+                self.status = "Select a character"
+                self._refresh()
+                return
+            # Already applied this pack (e.g. Back from Config while on Main).
+            if self.character is not None and self.character.id == pack.id:
+                self.page = "main"
+                self.status = status_when_main or f"Playing as {pack.display_name}"
+                self._sync_stage_paths()
+                self._refresh()
+                return
+            self.status = f"Loading {pack.display_name}..."
+            self._refresh()
+            self._begin_apply_character(pack, status_when_ready=status_when_main)
             return
-        if not self.provider_configured:
-            self._force_config("Set model and API key before selecting a character.")
-            return
-        pack = next((c for c in self.characters if c.id == character_id), None)
-        if pack is None:
-            self.status = f"Unknown character: {character_id}"
+        page = next_setup_page(provider_ok=provider_ok, character_ok=character_ok)
+        if page == "config":
+            self.page = "config"
+            gaps = provider_config_gaps(
+                {
+                    "model": self.settings_model,
+                    "api_key_set": self.settings_api_key_set,
+                }
+            )
+            self.status = format_config_required_status(gaps)
             self._refresh()
             return
-        self.status = f"Loading {pack.display_name}..."
+        self.page = "character_select"
+        self.status = "Select a character"
         self._refresh()
 
+    def _begin_apply_character(
+        self, pack: CharacterPack, *, status_when_ready: str
+    ) -> None:
         def work() -> None:
             try:
                 # Default workspace: omit workspace_path so server uses ~/.amnesia-agent.
@@ -133,13 +188,45 @@ class AppState:
                     "/v1/workspace/system-prompt",
                     {"content": pack.prompt},
                 )
-                invoke(self._character_ready, pack)
+                invoke(self._character_ready, pack, status_when_ready)
             except Exception as error:  # noqa: BLE001
                 invoke(self._character_failed, error)
 
-        threading.Thread(target=work, name="assistant-char-select", daemon=True).start()
+        threading.Thread(target=work, name="assistant-char-apply", daemon=True).start()
 
-    def _character_ready(self, pack: CharacterPack) -> None:
+    # --- character select ----------------------------------------------------
+
+    def select_character(self, character_id: str) -> None:
+        if self.busy or not self.ready:
+            return
+        pack = next((c for c in self.characters if c.id == character_id), None)
+        if pack is None:
+            self.status = f"Unknown character: {character_id}"
+            self._refresh()
+            return
+        try:
+            self.assistant_config = self.config_store.set_selected_character(
+                character_id
+            )
+        except ConfigError as error:
+            self.status = f"Config error: {error}"
+            self.error = str(error)
+            self._refresh()
+            return
+
+        if not self.provider_configured:
+            self.page = "config"
+            self.status = "Character saved — set model and API key to continue"
+            self._refresh()
+            return
+
+        self.status = f"Loading {pack.display_name}..."
+        self._refresh()
+        self._begin_apply_character(
+            pack, status_when_ready=f"Playing as {pack.display_name}"
+        )
+
+    def _character_ready(self, pack: CharacterPack, status: str = "") -> None:
         self.character = pack
         self.current_bg = pack.default_bg
         self.current_expression = pack.default_expression
@@ -147,7 +234,7 @@ class AppState:
         self.last_assistant_text = ""
         self.last_assistant_choices = []
         self.page = "main"
-        self.status = f"Playing as {pack.display_name}"
+        self.status = status or f"Playing as {pack.display_name}"
         self._refresh()
 
     def _character_failed(self, error: Exception) -> None:
@@ -164,7 +251,10 @@ class AppState:
         self._refresh()
 
     def reset_default_workspace(self) -> None:
-        """Confirm then hard-reset ~/.amnesia-agent and re-apply the current character."""
+        """Confirm then hard-reset ~/.amnesia-agent and re-apply the current character.
+
+        Does not clear ``selected_character_id`` in Assistant home config.
+        """
         if self.busy or not self.ready:
             return
         pack = self.character
@@ -344,12 +434,6 @@ class AppState:
             self.status = "Cannot open config while busy."
             self._refresh()
             return
-        if self.page in ("character_select", "main", "config"):
-            self.config_return_page = (
-                self.page if self.page != "config" else self.config_return_page
-            )
-        else:
-            self.config_return_page = "character_select"
         self.page = "config"
         self.load_config_form()
         self._refresh()
@@ -366,17 +450,16 @@ class AppState:
             )
             self._refresh()
             return
-        target = self.config_return_page or "character_select"
-        if target == "main" and self.character is None:
-            target = "character_select"
-        self.page = target
-        self.status = "Ready" if target != "main" else self.status
-        if target == "character_select":
-            self.status = "Select a character"
-        self._refresh()
+        # Re-check readiness: Main only when character is also valid.
+        self._route_from_readiness(
+            status_when_main=(
+                f"Playing as {self.character.display_name}"
+                if self.character is not None
+                else "Ready"
+            )
+        )
 
     def _force_config(self, reason: str) -> None:
-        self.config_return_page = self.page if self.page != "config" else self.config_return_page
         self.page = "config"
         self.status = reason
         self.load_config_form()
@@ -451,14 +534,8 @@ class AppState:
             self.status = format_config_required_status(provider_config_gaps(config))
             self._refresh()
             return
-        self.status = "Settings saved"
-        target = self.config_return_page or "character_select"
-        if target == "main" and self.character is None:
-            target = "character_select"
-        self.page = target
-        if target == "character_select":
-            self.status = "Settings saved — select a character"
-        self._refresh()
+        # Provider ok → Main if character selected+valid, else Character Select.
+        self._route_from_readiness(status_when_main="Settings saved")
 
     def _config_failed(self, error: Exception) -> None:
         self.status = f"Config error: {error}"

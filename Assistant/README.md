@@ -3,10 +3,12 @@
 A Ren'Py visual-novel-style frontend for `amnesia-agent`. Open this folder with the
 Ren'Py launcher (separate from [`renpy/`](../renpy/)).
 
-Flow: **start → Config (if needed) → Character Select → Main**. Always uses the
-default workspace (`~/.amnesia-agent`, by omitting `workspace_path`). There is a
-slim **Config** page for `model` + `api_key` via `GET`/`PUT /v1/config`. No
-workspace picker in v1.
+**Locked boot** (like renpy recent-workspace auto-enter): once provider creds and a
+character choice are complete, later launches skip setup and open **Main** directly.
+Persists `selected_character_id` in `~/.amnesia-agent-assistant/config.json`. Always
+uses the default workspace (`~/.amnesia-agent`, by omitting `workspace_path`). Slim
+**Config** page for `model` + `api_key` via `GET`/`PUT /v1/config`. No workspace
+picker in v1.
 
 ## Requirements
 
@@ -15,9 +17,15 @@ pip install ./kernel
 pip install ./local_server
 ```
 
-On first run the game forces **Config** until a non-empty `model` and an API key
-are saved (blank API key on later saves keeps the existing key). Set
-`AMNESIA_AGENT_PYTHON` if the game must spawn a specific Python for
+On first run the game gates until **both** are ready:
+
+1. **Provider** — non-empty `model` and an API key saved (blank API key on later
+   saves keeps the existing key). Prefer **Config** first when these are missing.
+2. **Character** — `selected_character_id` in Assistant home config matching a
+   bundled pack. Prefer **Character Select** when provider is ok but character is
+   missing/invalid.
+
+Set `AMNESIA_AGENT_PYTHON` if the game must spawn a specific Python for
 `python -m amnesia_agent_local_server`.
 
 ## Run
@@ -25,8 +33,11 @@ are saved (blank API key on later saves keeps the existing key). Set
 1. Install kernel + local_server (above).
 2. Open the `Assistant/` project in the Ren'Py SDK launcher (8.5+ recommended).
 3. Click Launch / Run. The game spawns the local server, health-checks
-   `instance_id`, loads `/v1/config`, and opens Config if model/API key are
-   missing; otherwise Character Select.
+   `instance_id`, loads `/v1/config` and `~/.amnesia-agent-assistant/config.json`,
+   then:
+   - **Both ready** → apply character (setup-or-repair, PUT prompt, assets) → **Main**
+   - Missing model/API key → **Config** (cannot proceed without save success)
+   - Missing/invalid character → **Character Select**
 
 ## Architecture
 
@@ -34,13 +45,15 @@ are saved (blank API key on later saves keeps the existing key). Set
 Assistant/game/
   api/          # HTTP JSON + SSE (Client, TurnHandle, ASSISTANT_STAGE)
   process/      # spawn / poll / shutdown local_server
-  state/        # AppState + stage apply helpers
+  state/        # AppState + stage apply + readiness helpers
+  home_config/  # ~/.amnesia-agent-assistant/config.json (selected_character_id)
   characters/   # bundled packs (aurora, kai)
   screens/      # loading, config, character_select, main
   script.rpy / options.rpy
 ```
 
-Independent of `renpy/` — no cross-package imports. Patterns were copied slim.
+Independent of `renpy/` — no cross-package imports. Patterns were copied slim
+(including home JSON store with `chmod 0600` writes).
 
 ## Characters
 
@@ -66,16 +79,18 @@ sprites and backgrounds are generated illustrations matching this direction (not
 - Input always visible; **Send** when idle, **Cancel** when busy.
 - While `app.busy`, Main shows the character's **`busy`** sprite (UI-only). The LLM
   still emits `expression` among `neutral` / `smile` / `think` only.
+- **Character Select**: saves `selected_character_id`, then **Main** if provider ok,
+  else **Config**.
+- **Config save**: if selected character is still valid → apply + **Main**; else
+  **Character Select**. Cannot leave Config until model + API key are set.
 - **Reset** (Main / Character Select): Confirm → `POST /v1/workspace/create-or-reset`
   on the default workspace (hard wipe), re-PUT the current character `prompt.md`,
-  clear message/choices, restore default bg/expression.
+  clear message/choices, restore default bg/expression. Does **not** clear
+  Assistant `selected_character_id`.
 - Cancel closes the SSE connection; busy clears on complete (same contract as renpy).
 - `POST /v1/turn` with `response_format` `assistant_stage`:
   `message`, `choices`, `bg`, `expression`.
 - Unknown `bg` / `expression` ids keep the previous stage and set a status warning.
-- **Config** (Main / Character Select): `model` (required) + `api_key` (required
-  until set; blank keep-existing thereafter). Turns and character play are blocked
-  until both are configured.
 - Quit blocked while busy; otherwise `POST /v1/shutdown` then exit.
 
 ## Tests
@@ -89,4 +104,5 @@ cd Assistant && python -m unittest discover -t . -s tests -v
 ## v1 non-goals
 
 No STT, TTS, Live2D, character editor, voice, or workspace picker. Config is
-model + api_key only (other local_server fields can wait).
+model + api_key only (other local_server fields can wait). Character choice is
+persisted; switching characters is still available from Main.
