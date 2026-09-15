@@ -6,8 +6,6 @@ screen character_select_page():
         hbox:
             spacing 12
             textbutton "Config" action Function(app.go_config) sensitive (not app.busy)
-            if app.character is not None:
-                textbutton "Reset default workspace" action Function(app.reset_default_workspace) sensitive (not app.busy)
 
         hbox:
             spacing 28

@@ -47,3 +47,9 @@ screen config_page():
                 settings_base_url,
                 settings_provider_params,
             ) sensitive (not app.busy)
+
+
+        null height 24
+        text "Danger zone" size 22 bold True
+        text "Hard-reset deletes everything under ~/.amnesia-agent, then re-applies the current character prompt. Infrequent — confirm carefully." style "app_small"
+        textbutton "Reset default workspace…" action Function(app.reset_default_workspace) sensitive (not app.busy and app.character is not None)
