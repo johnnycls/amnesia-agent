@@ -1,0 +1,32 @@
+Loading Page:
+	Check server health and Renpy Config Healthy
+
+Workspace Select Page (Remember last entered workspace, auto go to main page if last entered workspace is valid)
+	List of workspaces opened before, Click to open or delete
+	Import new workspace, select path to open
+	Create new workspace, select path to create
+	if open: check workspace
+		if valid: setup_or_repair workspace
+		if not valid: choose setup_or_repair or create_or_reset
+	else: create_or_reset
+
+Main Page: 
+	Back Button (back to Workspace Select)
+	Workspace Settings (route)
+	Config Settings (route)
+	Options (if last msg is assistant message with options)
+	Input (if agent is not locked)
+	Last Assistant Message (if any)
+
+Workspace Setting Page:
+	read system prompt, update, reset (renpy default system prompt)
+	read memory, update
+	list history, read history, clear history 
+
+Config Page (Kernel Config, Local Server Config, Renpy Config): 
+	Read Config
+	Update Config
+	Reset Config
+
+Notes:
+	Not allow close app when agent busy.
