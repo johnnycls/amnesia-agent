@@ -1,19 +1,5 @@
 {
   "id": "kai",
   "display_name": "Kai",
-  "default_bg": "room",
-  "default_expression": "neutral",
-  "backgrounds": {
-    "room": "bg/room.png",
-    "outdoor": "bg/outdoor.png"
-  },
-  "expressions": {
-    "neutral": "sprites/neutral.png",
-    "smile": "sprites/smile.png",
-    "think": "sprites/think.png",
-    "busy": "sprites/busy.png",
-    "surprised": "sprites/surprised.png",
-    "sad": "sprites/sad.png",
-    "shy": "sprites/shy.png"
-  }
+  "default_bg": "room"
 }

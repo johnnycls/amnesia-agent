@@ -64,16 +64,18 @@ Each pack lives under `game/characters/<id>/`:
 
 | File | Role |
 |---|---|
-| `character.json` | id, display name, default bg/expression, asset maps |
+| `character.json` | id, display name, default background ID |
 | `prompt.md` | system prompt written on select via `PUT /v1/workspace/system-prompt` |
-| `bg/*.png` | background ids |
-| `sprites/*.png` | expression ids |
+| `bg/` | discovered PNG/JPEG/WebP/MP4/WebM background assets; filename stems are IDs |
+| `expressions/` | discovered PNG/JPEG/WebP/MP4/WebM expression assets; filename stems are IDs |
+
+Every pack must provide at least one background plus transparent `neutral` and `busy` expressions. PNG/WebP signatures and expression alpha channels are validated before Main; video assets are not supported in v1.
 
 ### Art direction
 
 Color-block moe style: limited palette (3–5 groups), no lineart, two-step shadows,
 extreme foreshortening / dynamic poses, ~6.5–7.5 head proportions. Bundled Aurora/Kai
-sprites and backgrounds are generated illustrations matching this direction (not PIL solids).
+expressions and backgrounds are generated illustrations matching this direction (not PIL solids).
 
 
 ## Main behaviour
@@ -92,7 +94,7 @@ sprites and backgrounds are generated illustrations matching this direction (not
   Config until model + API key are set.
 - **Reset** (Main / Character Select): Confirm → `POST /v1/workspace/create-or-reset`
   on the default workspace (hard wipe), re-PUT the current character `prompt.md`,
-  clear message/choices, restore default bg/expression. Does **not** clear
+  clear message/choices, restore the default background and `neutral` expression. Does **not** clear
   Assistant `selected_character_id`.
 - Cancel closes the SSE connection; busy clears on complete (same contract as renpy).
 - `POST /v1/turn` with `response_format` `assistant_stage`:

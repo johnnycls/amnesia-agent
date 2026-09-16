@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -18,6 +19,21 @@ from characters.loader import (  # noqa: E402
     load_character,
 )
 
+TRANSPARENT_PNG = (
+    b"\x89PNG\r\n\x1a\n"
+    b"\x00\x00\x00\x0dIHDR"
+    b"\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06"
+)
+
+
+def symlink_or_skip(link: Path, target: Path) -> None:
+    try:
+        link.symlink_to(target)
+    except OSError as error:
+        if os.name == "nt":
+            raise unittest.SkipTest(f"symlinks unavailable: {error}") from error
+        raise
+
 
 class CharacterPackTests(unittest.TestCase):
     def test_bundled_packs_load(self) -> None:
@@ -28,14 +44,16 @@ class CharacterPackTests(unittest.TestCase):
             self.assertTrue(pack.display_name)
             self.assertTrue(pack.prompt.strip())
             self.assertIn(pack.default_bg, pack.backgrounds)
-            self.assertIn(pack.default_expression, pack.expressions)
+            self.assertIn("neutral", pack.expressions)
             self.assertIn("busy", pack.expressions)
             for name in ("neutral", "smile", "think", "busy", "surprised", "sad", "shy"):
                 self.assertIn(name, pack.expressions)
-            for path in pack.backgrounds.values():
-                self.assertTrue(Path(path).is_file(), path)
-            for path in pack.expressions.values():
-                self.assertTrue(Path(path).is_file(), path)
+            for asset in pack.backgrounds.values():
+                self.assertEqual(asset.kind, "image")
+                self.assertTrue(Path(asset.path).is_file(), asset.path)
+            for asset in pack.expressions.values():
+                self.assertEqual(asset.kind, "image")
+                self.assertTrue(Path(asset.path).is_file(), asset.path)
             self.assertIsNotNone(pack.portrait_path())
 
     def test_list_character_ids_sorted(self) -> None:
@@ -44,6 +62,96 @@ class CharacterPackTests(unittest.TestCase):
     def test_missing_pack_fails_loud(self) -> None:
         with self.assertRaises(CharacterError):
             load_character("does-not-exist")
+
+    def test_invalid_metadata_encoding_fails_as_character_error(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            pack_dir = Path(directory) / "fake"
+            (pack_dir / "bg").mkdir(parents=True)
+            (pack_dir / "expressions").mkdir()
+            (pack_dir / "character.json").write_bytes(b"{\xff")
+            (pack_dir / "prompt.md").write_text("hi", encoding="utf-8")
+            (pack_dir / "bg" / "room.png").write_bytes(TRANSPARENT_PNG)
+            (pack_dir / "expressions" / "neutral.png").write_bytes(
+                TRANSPARENT_PNG
+            )
+            with self.assertRaises(CharacterError) as context:
+                load_character("fake", root=directory)
+            self.assertIn("character.json", str(context.exception))
+
+    def test_duplicate_asset_stems_fail_loud(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            pack_dir = Path(directory) / "fake"
+            (pack_dir / "bg").mkdir(parents=True)
+            (pack_dir / "expressions").mkdir()
+            (pack_dir / "character.json").write_text(
+                json.dumps(
+                    {
+                        "id": "fake",
+                        "display_name": "Fake",
+                        "default_bg": "room",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (pack_dir / "prompt.md").write_text("hi", encoding="utf-8")
+            (pack_dir / "bg" / "room.png").write_bytes(TRANSPARENT_PNG)
+            (pack_dir / "expressions" / "neutral.png").write_bytes(
+                TRANSPARENT_PNG
+            )
+            (pack_dir / "expressions" / "neutral.webp").write_bytes(
+                b"RIFF0000WEBP"
+            )
+            with self.assertRaises(CharacterError) as context:
+                load_character("fake", root=directory)
+            self.assertIn("Duplicate expression id", str(context.exception))
+
+    def test_asset_outside_pack_fails_loud(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            pack_dir = root / "fake"
+            (pack_dir / "bg").mkdir(parents=True)
+            (pack_dir / "expressions").mkdir()
+            (root / "outside.png").write_bytes(TRANSPARENT_PNG)
+            (pack_dir / "character.json").write_text(
+                json.dumps(
+                    {
+                        "id": "fake",
+                        "display_name": "Fake",
+                        "default_bg": "room",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (pack_dir / "prompt.md").write_text("hi", encoding="utf-8")
+            (pack_dir / "bg" / "room.png").write_bytes(TRANSPARENT_PNG)
+            symlink_or_skip(pack_dir / "expressions" / "neutral.png", root / "outside.png")
+            with self.assertRaises(CharacterError) as context:
+                load_character("fake", root=directory)
+            self.assertIn("escapes character pack", str(context.exception))
+
+    def test_video_assets_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            pack_dir = Path(directory) / "fake"
+            (pack_dir / "bg").mkdir(parents=True)
+            (pack_dir / "expressions").mkdir()
+            (pack_dir / "character.json").write_text(
+                json.dumps(
+                    {
+                        "id": "fake",
+                        "display_name": "Fake",
+                        "default_bg": "loop",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (pack_dir / "prompt.md").write_text("hi", encoding="utf-8")
+            (pack_dir / "bg" / "loop.mp4").write_bytes(b"\x00\x00\x00\x18ftypisom")
+            for name in ("neutral", "busy"):
+                (pack_dir / "expressions" / f"{name}.png").write_bytes(TRANSPARENT_PNG)
+
+            with self.assertRaises(CharacterError) as context:
+                load_character("fake", root=directory)
+            self.assertIn("Unsupported background format", str(context.exception))
 
     def test_id_mismatch_fails_loud(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -55,18 +163,17 @@ class CharacterPackTests(unittest.TestCase):
                         "id": "other",
                         "display_name": "Fake",
                         "default_bg": "room",
-                        "default_expression": "neutral",
-                        "backgrounds": {"room": "bg/room.png"},
-                        "expressions": {"neutral": "sprites/neutral.png"},
                     }
                 ),
                 encoding="utf-8",
             )
             (pack_dir / "prompt.md").write_text("hi", encoding="utf-8")
             (pack_dir / "bg").mkdir()
-            (pack_dir / "sprites").mkdir()
-            (pack_dir / "bg" / "room.png").write_bytes(b"\x89PNG\r\n\x1a\n")
-            (pack_dir / "sprites" / "neutral.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+            (pack_dir / "expressions").mkdir()
+            (pack_dir / "bg" / "room.png").write_bytes(TRANSPARENT_PNG)
+            (pack_dir / "expressions" / "neutral.png").write_bytes(
+                TRANSPARENT_PNG
+            )
             with self.assertRaises(CharacterError):
                 load_character("fake", root=directory)
 

@@ -7,7 +7,12 @@ import threading
 from typing import Any
 
 from api.client import ApiError, Client, TurnHandle, TurnTimeoutError, invoke
-from characters.loader import CharacterError, CharacterPack, load_all_characters
+from characters.loader import (
+    CharacterError,
+    CharacterPack,
+    MediaAsset,
+    load_all_characters,
+)
 from home_config.store import (
     DEFAULT_LANGUAGE,
     SUPPORTED_LANGUAGES,
@@ -67,7 +72,9 @@ class AppState:
         self.current_bg = ""
         self.current_expression = ""
         self.bg_path = ""
+        self.bg_asset: MediaAsset | None = None
         self.sprite_path = ""
+        self.sprite_asset: MediaAsset | None = None
 
         self.last_assistant_text = ""
         self.last_assistant_choices: list[str] = []
@@ -371,7 +378,7 @@ class AppState:
         self._end_operation(operation_id)
         self.character = pack
         self.current_bg = pack.default_bg
-        self.current_expression = pack.default_expression
+        self.current_expression = "neutral"
         self._sync_stage_paths()
         self.last_assistant_text = ""
         self.last_assistant_choices = []
@@ -438,7 +445,7 @@ class AppState:
         self._end_operation(operation_id)
         self.character = pack
         self.current_bg = pack.default_bg
-        self.current_expression = pack.default_expression
+        self.current_expression = "neutral"
         self.last_assistant_text = ""
         self.last_assistant_choices = []
         self._sync_stage_paths()
@@ -818,15 +825,19 @@ class AppState:
     def _sync_stage_paths(self) -> None:
         pack = self.character
         if pack is None:
+            self.bg_asset = None
             self.bg_path = ""
+            self.sprite_asset = None
             self.sprite_path = ""
             return
-        self.bg_path = pack.backgrounds.get(self.current_bg, "")
+        self.bg_asset = pack.backgrounds.get(self.current_bg)
+        self.bg_path = self.bg_asset.path if self.bg_asset is not None else ""
         # `busy` is UI-only while a turn is in flight; LLM stage ids stay elsewhere.
         if self.busy and "busy" in pack.expressions:
-            self.sprite_path = pack.expressions["busy"]
+            self.sprite_asset = pack.expressions["busy"]
         else:
-            self.sprite_path = pack.expressions.get(self.current_expression, "")
+            self.sprite_asset = pack.expressions.get(self.current_expression)
+        self.sprite_path = self.sprite_asset.path if self.sprite_asset is not None else ""
 
     def _refresh(self) -> None:
         if renpy is not None:

@@ -12,6 +12,7 @@ GAME = Path(__file__).parents[1] / "game"
 sys.path.insert(0, str(GAME))
 
 from api.client import TurnTimeoutError  # noqa: E402
+from characters.loader import MediaAsset  # noqa: E402
 from state.app import AppState  # noqa: E402
 
 
@@ -50,8 +51,11 @@ class TurnLifecycleTests(unittest.TestCase):
         app.provider_configured = True
         app.character = SimpleNamespace(
             id="aurora",
-            backgrounds={"room": ""},
-            expressions={"neutral": "", "busy": ""},
+            backgrounds={"room": MediaAsset("room.jpg", "image")},
+            expressions={
+                "neutral": MediaAsset("neutral.jpg", "image"),
+                "busy": MediaAsset("busy.jpg", "image"),
+            },
         )
         app.current_bg = "room"
         app.current_expression = "neutral"
