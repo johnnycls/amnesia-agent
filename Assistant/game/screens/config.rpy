@@ -13,13 +13,18 @@ screen config_page():
 
         text "Interface language" size 22 bold True
         text "Current language: [app.language_display_name()]" style "app_small"
-        hbox:
-            spacing 8
-            textbutton "English" action SetVariable("settings_language", "english")
-            textbutton "简体中文" action SetVariable("settings_language", "schinese")
-            textbutton "繁體中文" action SetVariable("settings_language", "tchinese")
-            textbutton "日本語" action SetVariable("settings_language", "japanese")
-            textbutton "한국어" action SetVariable("settings_language", "korean")
+        viewport:
+            xfill True
+            ymaximum 58
+            mousewheel "horizontal"
+            draggable True
+            hbox:
+                spacing 8
+                textbutton "English" action SetVariable("settings_language", "english")
+                textbutton "简体中文" action SetVariable("settings_language", "schinese")
+                textbutton "繁體中文" action SetVariable("settings_language", "tchinese")
+                textbutton "日本語" action SetVariable("settings_language", "japanese")
+                textbutton "한국어" action SetVariable("settings_language", "korean")
 
         text "Model" style "app_small"
         input value VariableInputValue("settings_model") xfill True length 200

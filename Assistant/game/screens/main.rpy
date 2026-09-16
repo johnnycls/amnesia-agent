@@ -1,7 +1,7 @@
 screen main_page():
     # Character sprite (right-ish)
-    if app.sprite_path:
-        add app.sprite_path:
+    if app.sprite_displayable:
+        add app.sprite_displayable:
             xalign 0.82
             yalign 1.0
             yoffset 40
@@ -13,8 +13,10 @@ screen main_page():
         xfill True
         padding (20, 12)
         hbox:
+            xfill True
             spacing 16
             textbutton "Characters" action Function(app.go_character_select)
+            textbutton "Mods" action Function(app.go_mod_manager) sensitive (not app.busy)
             textbutton "Config" action Function(app.go_config) sensitive (not app.busy)
             if app.character:
                 text app.character.display_name style "app_small" yalign 0.5
@@ -42,18 +44,23 @@ screen main_page():
                         text "Say something to begin." style "app_small"
 
             if app.last_assistant_choices and not app.busy:
-                hbox:
-                    spacing 10
-                    for choice in app.last_assistant_choices:
-                        textbutton choice action Function(app.choose, choice)
+                viewport:
+                    xfill True
+                    ymaximum 62
+                    mousewheel "horizontal"
+                    draggable True
+                    hbox:
+                        spacing 10
+                        for choice in app.last_assistant_choices:
+                            textbutton choice action Function(app.choose, choice)
 
             hbox:
+                xfill True
                 spacing 10
                 input:
                     value VariableInputValue("input_text")
                     xfill True
                     length 400
-                    pixel_width 1100
                     style "app_text"
                 if app.busy:
                     textbutton "Cancel" action Function(app.cancel)

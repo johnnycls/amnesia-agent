@@ -3,8 +3,8 @@
 screen app_shell():
     tag menu
 
-    if app.page == "main" and app.bg_path:
-        add app.bg_path xysize (1920, 1080)
+    if app.page == "main" and app.bg_displayable:
+        add app.bg_displayable xalign 0.5 yalign 0.5 xysize (config.screen_width, config.screen_height) fit "cover"
     else:
         add Solid("#101820")
 
@@ -32,6 +32,8 @@ screen app_shell():
                     use loading_page
                 elif app.page == "character_select":
                     use character_select_page
+                elif app.page == "mod_manager":
+                    use mod_manager_page
                 elif app.page == "config":
                     use config_page
                 else:

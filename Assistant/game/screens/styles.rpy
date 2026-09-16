@@ -27,3 +27,16 @@ style app_message:
     color "#f2f5f8"
     size 24
     textalign 0.0
+
+style character_card:
+    background "#182631cc"
+    hover_background "#36546acc"
+    selected_background "#4c7892ee"
+    padding (14, 12)
+    xsize 270
+    ysize 430
+
+style character_card_name:
+    color "#e8edf2"
+    hover_color "#ffffff"
+    size 20

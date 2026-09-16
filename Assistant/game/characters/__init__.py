@@ -1,1 +1,1 @@
-"""Bundled character packs for Assistant."""
+"""Bundled and user-installed character animation packs for Assistant."""

@@ -1,4 +1,4 @@
-"""Assistant home JSON config (~/.amnesia-agent-assistant/config.json)."""
+"""Assistant persistent preferences and the non-Ren'Py test adapter."""
 
 from home_config.store import (
     DEFAULT_LANGUAGE,
@@ -6,6 +6,8 @@ from home_config.store import (
     AssistantConfig,
     AssistantConfigStore,
     ConfigError,
+    PersistentAssistantConfigStore,
+    build_config_store,
     default_config_dict,
 )
 
@@ -14,6 +16,8 @@ __all__ = [
     "SUPPORTED_LANGUAGES",
     "AssistantConfig",
     "AssistantConfigStore",
+    "PersistentAssistantConfigStore",
+    "build_config_store",
     "ConfigError",
     "default_config_dict",
 ]

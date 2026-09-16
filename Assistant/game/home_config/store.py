@@ -1,4 +1,4 @@
-"""Persist Assistant frontend settings at ~/.amnesia-agent-assistant/config.json."""
+"""Persist Assistant preferences in Ren'Py, with a test-only JSON adapter."""
 
 from __future__ import annotations
 
@@ -8,6 +8,11 @@ import stat
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
+
+try:
+    import renpy  # type: ignore[import-not-found]
+except ImportError:
+    renpy = None  # type: ignore[assignment]
 
 DEFAULT_CONFIG_DIR = Path.home() / ".amnesia-agent-assistant"
 DEFAULT_LANGUAGE: Final[str] = "english"
@@ -33,6 +38,61 @@ class AssistantConfig:
 
 def default_config_dict() -> dict[str, Any]:
     return {"selected_character_id": "", "language": DEFAULT_LANGUAGE}
+
+
+class PersistentAssistantConfigStore:
+    """Production preference store backed by Ren'Py persistent data."""
+
+    def _persistent(self) -> Any:
+        if renpy is None:
+            raise ConfigError("Ren'Py persistent storage is unavailable")
+        return renpy.store.persistent
+
+    def load(self) -> AssistantConfig:
+        persistent = self._persistent()
+        selected = getattr(persistent, "selected_character_id", "")
+        language = getattr(persistent, "assistant_language", DEFAULT_LANGUAGE)
+        if selected is None:
+            selected = ""
+        if not isinstance(selected, str):
+            raise ConfigError("persistent.selected_character_id must be a string")
+        if not isinstance(language, str) or language not in SUPPORTED_LANGUAGES:
+            raise ConfigError(f"Invalid persistent assistant language: {language!r}")
+        return AssistantConfig(selected_character_id=selected.strip(), language=language)
+
+    def save(self, config: AssistantConfig) -> None:
+        persistent = self._persistent()
+        persistent.selected_character_id = config.selected_character_id
+        persistent.assistant_language = config.language
+        renpy.save_persistent()
+
+    def reset(self) -> AssistantConfig:
+        config = AssistantConfig(selected_character_id="", language=DEFAULT_LANGUAGE)
+        self.save(config)
+        return config
+
+    def set_selected_character(self, character_id: str) -> AssistantConfig:
+        if not isinstance(character_id, str):
+            raise ConfigError("selected_character_id must be a string")
+        current = self.load()
+        updated = AssistantConfig(character_id.strip(), current.language)
+        self.save(updated)
+        return updated
+
+    def set_language(self, language: str) -> AssistantConfig:
+        if language not in SUPPORTED_LANGUAGES:
+            raise ConfigError(f"Unsupported language: {language!r}")
+        current = self.load()
+        updated = AssistantConfig(current.selected_character_id, language)
+        self.save(updated)
+        return updated
+
+
+def build_config_store() -> PersistentAssistantConfigStore | "AssistantConfigStore":
+    """Use Ren'Py persistence in-game and JSON only for non-Ren'Py tests."""
+    if renpy is not None:
+        return PersistentAssistantConfigStore()
+    return AssistantConfigStore()
 
 
 class AssistantConfigStore:
