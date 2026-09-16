@@ -12,6 +12,15 @@ from amnesia_agent_kernel.workspace.history import HistoryStore
 from amnesia_agent_kernel.workspace.paths import resolve_root
 
 
+def _symlink_or_skip(link: Path, target: Path) -> None:
+    try:
+        link.symlink_to(target)
+    except OSError as error:
+        if os.name == "nt":
+            raise unittest.SkipTest(f"symlinks unavailable: {error}") from error
+        raise
+
+
 class HistoryTests(unittest.TestCase):
     def fixed_clock(self) -> datetime:
         return datetime(2026, 8, 28, 12, 0, tzinfo=timezone.utc)
@@ -205,7 +214,7 @@ class HistoryTests(unittest.TestCase):
             real = Path(directory) / "real"
             real.mkdir()
             link = Path(directory) / "link"
-            link.symlink_to(real)
+            _symlink_or_skip(link, real)
             ws_real = Workspace(real, clock=self.fixed_clock)
             ws_link = Workspace(link, clock=self.fixed_clock)
             self.assertIs(ws_real._history._history_lock, ws_link._history._history_lock)

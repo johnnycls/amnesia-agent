@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import tempfile
 import unittest
 from contextlib import aclosing
@@ -16,6 +17,15 @@ from amnesia_agent_local_server.config import ConfigStore
 from amnesia_agent_local_server.routes.turn import stream_sse
 from amnesia_agent_local_server.session import SessionManager, TurnBusyError
 from amnesia_agent_local_server.sse import event_envelope
+
+
+def _symlink_or_skip(link: Path, target: Path) -> None:
+    try:
+        link.symlink_to(target)
+    except OSError as error:
+        if os.name == "nt":
+            raise unittest.SkipTest(f"symlinks unavailable: {error}") from error
+        raise
 
 
 class FakeSession:
@@ -545,7 +555,7 @@ class SessionTests(unittest.TestCase):
             real = Path(directory) / "real-ws"
             real.mkdir()
             link = Path(directory) / "link-ws"
-            link.symlink_to(real)
+            _symlink_or_skip(link, real)
             abs_key = resolved_workspace_key(str(real))
             self.assertEqual(resolved_workspace_key(str(link)), abs_key)
             # Relative form of the same directory collides after resolve.
@@ -567,7 +577,7 @@ class SessionTests(unittest.TestCase):
                 real = Path(directory) / "real-ws"
                 real.mkdir()
                 link = Path(directory) / "link-ws"
-                link.symlink_to(real)
+                _symlink_or_skip(link, real)
                 _write_config(store)
                 manager = SessionManager(store)
                 with patch("amnesia_agent_local_server.session.KernelSession", FakeSession):

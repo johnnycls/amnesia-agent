@@ -50,6 +50,32 @@ class ProviderValidationTests(unittest.TestCase):
         ):
             validate_provider_config(config)
 
+    def test_invalid_provider_params_are_rejected_before_preflight(self) -> None:
+        for params, expected in (
+            ([], "provider_params must be a JSON object or None"),
+            (
+                {"temperature": float("nan")},
+                "provider_params.temperature must contain finite numbers",
+            ),
+            (
+                {"nested": object()},
+                "provider_params.nested must contain only JSON-compatible values",
+            ),
+        ):
+            with self.subTest(params=params), patch(
+                "amnesia_agent_kernel.provider.litellm.validate_environment"
+            ) as preflight:
+                with self.assertRaises(ConfigError) as context:
+                    validate_provider_config(ProviderConfig("openai/test", provider_params=params))  # type: ignore[arg-type]
+            self.assertIn(expected, str(context.exception))
+            preflight.assert_not_called()
+
+    def test_provider_scalar_types_are_rejected_before_preflight(self) -> None:
+        with patch("amnesia_agent_kernel.provider.litellm.validate_environment") as preflight:
+            with self.assertRaises(ConfigError):
+                validate_provider_config(ProviderConfig("openai/test", api_key=42))  # type: ignore[arg-type]
+        preflight.assert_not_called()
+
     def test_session_preflights_before_workspace_setup(self) -> None:
         config = ProviderConfig("openai/test")
         with (

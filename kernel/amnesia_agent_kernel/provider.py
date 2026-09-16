@@ -16,6 +16,14 @@ def validate_provider_config(config: ProviderConfig) -> None:
         raise ConfigError("config must be a ProviderConfig instance")
     if not isinstance(config.model, str) or not config.model.strip():
         raise ConfigError("model must be a non-empty string")
+    for name in ("api_key", "base_url"):
+        value = getattr(config, name)
+        if value is not None and not isinstance(value, str):
+            raise ConfigError(f"{name} must be a string or None")
+    if config.provider_params is not None:
+        if not isinstance(config.provider_params, Mapping):
+            raise ConfigError("provider_params must be a JSON object or None")
+        _snapshot_json_value(config.provider_params, "provider_params")
     try:
         result: Any = litellm.validate_environment(
             config.model,

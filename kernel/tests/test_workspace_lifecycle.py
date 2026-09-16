@@ -149,6 +149,36 @@ class WorkspaceLifecycleTests(unittest.TestCase):
             with self.assertRaises(WorkspaceError):
                 KernelSession.create_or_reset_workspace(file_root)
 
+    def test_workspace_text_write_failure_preserves_old_content(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Workspace(directory)
+            workspace.update_system_prompt("old prompt")
+            with patch(
+                "amnesia_agent_kernel.workspace.files.os.replace",
+                side_effect=OSError("replace failed"),
+            ):
+                with self.assertRaises(WorkspaceError):
+                    workspace.update_system_prompt("new prompt")
+
+            self.assertEqual(workspace.read_system_prompt(), "old prompt")
+            self.assertEqual(list(Path(directory).glob(".system_prompt.md.*.tmp")), [])
+
+    def test_workspace_setup_removes_recognized_stale_temps(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            stale_prompt = root / ".system_prompt.md.stale.tmp"
+            stale_memory = root / ".memory.md.stale.tmp"
+            unrelated = root / ".user-file.tmp"
+            stale_prompt.write_text("old", encoding="utf-8")
+            stale_memory.write_text("old", encoding="utf-8")
+            unrelated.write_text("keep", encoding="utf-8")
+
+            Workspace(directory)
+
+            self.assertFalse(stale_prompt.exists())
+            self.assertFalse(stale_memory.exists())
+            self.assertTrue(unrelated.exists())
+
     def test_workspace_init_setup_preserves_existing(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = self._seed_workspace(directory)
