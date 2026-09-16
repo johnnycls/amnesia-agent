@@ -258,7 +258,7 @@ class ProviderParamsRedactTests(unittest.TestCase):
 
 
 class ApiKeyUpdateTests(unittest.TestCase):
-    def test_blank_api_key_clears_stored_key(self) -> None:
+    def test_empty_api_key_string_clears_stored_key(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = ConfigStore(directory)
             store.path.parent.mkdir(parents=True, exist_ok=True)
@@ -274,7 +274,7 @@ class ApiKeyUpdateTests(unittest.TestCase):
             self.assertEqual(loaded.provider.model, "openai/other")
             self.assertIsNone(loaded.provider.api_key)
 
-    def test_api_key_clear_removes_stored_key(self) -> None:
+    def test_put_empty_api_key_alone_clears_stored_key(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = ConfigStore(directory)
             store.path.parent.mkdir(parents=True, exist_ok=True)

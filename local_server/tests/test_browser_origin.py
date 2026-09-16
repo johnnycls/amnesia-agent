@@ -17,6 +17,10 @@ class BrowserOriginPolicyTests(unittest.TestCase):
             "http://127.0.0.1:5173",
             "http://127.0.0.2:8080",
             "http://[::1]:9000",
+            "https://localhost",
+            "https://localhost:3000",
+            "https://127.0.0.1:5173",
+            "https://[::1]:9000",
         ):
             with self.subTest(origin=origin):
                 self.assertTrue(is_allowed_browser_origin(origin))
@@ -25,7 +29,7 @@ class BrowserOriginPolicyTests(unittest.TestCase):
         for origin in (
             "null",
             "file://",
-            "https://localhost:3000",
+            "https://evil.example",
             "http://example.com",
             "http://localhost.evil.example",
             "http://127.999.0.1:3000",
@@ -44,6 +48,18 @@ class BrowserOriginPolicyTests(unittest.TestCase):
         self.assertEqual(
             response.headers.get("access-control-allow-origin"),
             "http://localhost:5173",
+        )
+
+    def test_allowed_https_origin_gets_cors_response_header(self) -> None:
+        client = TestClient(create_app())
+        response = client.get(
+            "/v1/health",
+            headers={"Origin": "https://localhost:5173"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.headers.get("access-control-allow-origin"),
+            "https://localhost:5173",
         )
 
     def test_disallowed_origin_is_rejected_before_endpoint(self) -> None:

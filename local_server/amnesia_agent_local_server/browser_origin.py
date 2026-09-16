@@ -17,9 +17,9 @@ def is_allowed_browser_origin(origin: str | None) -> bool:
     """Return whether a browser origin is allowed to access the local API.
 
     Missing ``Origin`` is allowed for non-browser clients such as Ren'Py and
-    command-line tools. Browser origins must use HTTP and resolve to localhost
-    or a loopback IP address. ``null`` origins, including ``file://`` pages,
-    are deliberately rejected.
+    command-line tools. Browser origins must use ``http`` or ``https`` and
+    resolve to localhost or a loopback IP address. ``null`` origins, including
+    ``file://`` pages, are deliberately rejected.
     """
     if origin is None:
         return True
@@ -33,7 +33,7 @@ def is_allowed_browser_origin(origin: str | None) -> bool:
         return False
 
     if (
-        parsed.scheme != "http"
+        parsed.scheme not in ("http", "https")
         or parsed.username is not None
         or parsed.password is not None
         or parsed.path

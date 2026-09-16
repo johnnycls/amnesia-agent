@@ -1,5 +1,6 @@
 {
   "id": "aurora",
   "display_name": "Aurora",
-  "default_bg": "room"
+  "default_bg": "room",
+  "version": "1.0.0"
 }

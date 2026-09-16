@@ -22,7 +22,8 @@ MAX_ANIMATION_BYTES = 25 * 1024 * 1024
 _ASSET_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 _CHARACTER_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{1,63}$")
 _FRAME_RE = re.compile(r"^(\d{4})\.png$")
-_METADATA_KEYS = frozenset({"id", "display_name", "default_bg"})
+_METADATA_KEYS = frozenset({"id", "display_name", "default_bg", "version"})
+_VERSION_RE = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 _ANIMATION_KEYS = frozenset({"type", "fps", "loop"})
 
 
@@ -172,6 +173,16 @@ def load_character(
     if not prompt.strip():
         raise CharacterError(f"prompt.md is empty for {character_id}")
 
+    pack_version = raw.get("version")
+    if pack_version is None:
+        resolved_version = version
+    elif not isinstance(pack_version, str) or _VERSION_RE.fullmatch(pack_version) is None:
+        raise CharacterError(
+            f"character.json version for {character_id} must be semantic major.minor.patch"
+        )
+    else:
+        resolved_version = pack_version
+
     return CharacterPack(
         id=character_id,
         display_name=display_name.strip(),
@@ -181,7 +192,7 @@ def load_character(
         prompt=prompt,
         pack_dir=os.path.abspath(pack_dir),
         source=source,
-        version=version,
+        version=resolved_version,
     )
 
 

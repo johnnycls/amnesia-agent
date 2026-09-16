@@ -54,11 +54,19 @@ class ModManifest:
 
 @dataclass(frozen=True)
 class InstallResult:
+    """Outcome for one inbox archive.
+
+    ``installed`` is True only when this archive became the live install.
+    Valid but older inbox archives for the same id are reported with
+    ``installed=False`` and a ``note`` such as ``superseded by 1.2.0``.
+    """
+
     archive: str
     mod_id: str | None
     version: str | None
     installed: bool
     error: str = ""
+    note: str = ""
 
 
 @dataclass
@@ -138,12 +146,18 @@ class ModStore:
                 for candidate in group:
                     candidate.archive.unlink(missing_ok=True)
                     self._clear_error(candidate.archive)
+                    activated = candidate is chosen
                     results.append(
                         InstallResult(
                             archive=os.fspath(candidate.archive),
                             mod_id=mod_id,
                             version=candidate.manifest.version,
-                            installed=True,
+                            installed=activated,
+                            note=(
+                                ""
+                                if activated
+                                else f"superseded by {chosen.manifest.version}"
+                            ),
                         )
                     )
             except (OSError, ModError) as error:
@@ -168,13 +182,18 @@ class ModStore:
     def export_character(self, pack: CharacterPack) -> Path:
         """Export a validated character pack as a root-layout .amod archive."""
         self.exports.mkdir(parents=True, exist_ok=True)
-        destination = self.exports / f"{pack.id}-{pack.version or '1.0.0'}.amod"
+        if not pack.version or _VERSION_RE.fullmatch(pack.version) is None:
+            raise ModError(
+                f"Character {pack.id!r} needs a semantic version before export "
+                "(set character.json version)"
+            )
+        destination = self.exports / f"{pack.id}-{pack.version}.amod"
         temporary = destination.with_suffix(".tmp")
         manifest = {
             "format": _MOD_FORMAT,
             "schema_version": 1,
             "id": pack.id,
-            "version": pack.version or "1.0.0",
+            "version": pack.version,
             "display_name": pack.display_name,
         }
         try:

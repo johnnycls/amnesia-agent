@@ -1,5 +1,6 @@
 {
   "id": "kai",
   "display_name": "Kai",
-  "default_bg": "room"
+  "default_bg": "room",
+  "version": "1.0.0"
 }
