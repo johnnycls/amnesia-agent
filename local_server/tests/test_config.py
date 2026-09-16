@@ -6,7 +6,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 from amnesia_agent_kernel import ConfigError
-from fastapi.testclient import TestClient
 
 from amnesia_agent_local_server.app import create_app
 from amnesia_agent_local_server.config import (
@@ -22,6 +21,7 @@ from amnesia_agent_local_server.config import (
     reject_provider_params_secrets,
     resolve_request_workspace_path,
 )
+from tests.client import LocalTestClient as TestClient
 
 
 class ConfigStoreTests(unittest.TestCase):

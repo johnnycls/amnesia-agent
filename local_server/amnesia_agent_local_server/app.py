@@ -7,8 +7,10 @@ from typing import Any
 from amnesia_agent_kernel import AgentError, ConfigError, WorkspaceError
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from amnesia_agent_local_server.browser_origin import BrowserOriginMiddleware
 from amnesia_agent_local_server.config import ConfigStore
 from amnesia_agent_local_server.constants import API_PREFIX
 from amnesia_agent_local_server.routes import config, health, shutdown, turn, workspace
@@ -21,6 +23,18 @@ def create_app(
 ) -> FastAPI:
     """Create an application with one ``SessionManager`` and versioned routers."""
     app = FastAPI(title="Amnesia Agent Local Server", version="0.0.0-alpha.0")
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origin_regex=(
+            r"^http://(?:localhost|127(?:\.\d{1,3}){3}|\[::1\])(?::\d+)?$"
+        ),
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    # Install after CORS so this middleware is the outer request guard. CORS
+    # controls browser response access; this rejects disallowed origins before
+    # any endpoint, including state-changing endpoints, is executed.
+    app.add_middleware(BrowserOriginMiddleware)
     app.state.session = SessionManager(config_store, instance_id)
     app.state.uvicorn_server = None
 

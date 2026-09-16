@@ -10,13 +10,13 @@ from typing import ClassVar
 from unittest.mock import patch
 
 from amnesia_agent_kernel import ConfigError
-from fastapi.testclient import TestClient
 
 from amnesia_agent_local_server.app import create_app
 from amnesia_agent_local_server.config import ConfigStore
 from amnesia_agent_local_server.routes.turn import stream_sse
 from amnesia_agent_local_server.session import SessionManager, TurnBusyError
 from amnesia_agent_local_server.sse import event_envelope
+from tests.client import LocalTestClient as TestClient
 
 
 def _symlink_or_skip(link: Path, target: Path) -> None:

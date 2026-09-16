@@ -36,6 +36,31 @@ class FakeResponse:
 
 
 class SseTests(unittest.TestCase):
+    def test_json_requests_send_local_client_marker(self) -> None:
+        from unittest.mock import patch
+
+        class JsonResponse:
+            def __enter__(self) -> "JsonResponse":
+                return self
+
+            def __exit__(self, *_args: object) -> None:
+                return None
+
+            def read(self) -> bytes:
+                return b"{}"
+
+        requests: list[object] = []
+
+        def fake_urlopen(request: object, timeout: float) -> JsonResponse:
+            requests.append(request)
+            return JsonResponse()
+
+        with patch("api.client.urlopen", side_effect=fake_urlopen):
+            Client().request_json("GET", "/v1/health")
+
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(requests[0].get_header("X-amnesia-client"), "local")
+
     def test_parse_sse_decodes_data_lines(self) -> None:
         events = list(
             parse_sse(

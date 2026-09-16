@@ -24,6 +24,8 @@ DEFAULT_PORT = 8765
 TURN_CONNECT_TIMEOUT_SECONDS = 10.0
 TURN_IDLE_TIMEOUT_SECONDS = 120.0
 _TURN_EVENT_TYPES = frozenset({"delta", "assistant", "tool_result", "error", "done"})
+_LOCAL_CLIENT_HEADER = "X-Amnesia-Client"
+_LOCAL_CLIENT_MARKER = "local"
 
 
 class ApiError(RuntimeError):
@@ -91,7 +93,9 @@ class Client:
         if query:
             url += "?" + urlencode(query)
         body = json.dumps(payload).encode("utf-8") if payload is not None else None
-        headers = {"Content-Type": "application/json"} if body is not None else {}
+        headers = {_LOCAL_CLIENT_HEADER: _LOCAL_CLIENT_MARKER}
+        if body is not None:
+            headers["Content-Type"] = "application/json"
         request = Request(url, data=body, headers=headers, method=method)
         try:
             with urlopen(request, timeout=timeout) as response:
@@ -146,6 +150,7 @@ class Client:
                     "Accept": "text/event-stream",
                     "Content-Type": "application/json",
                     "Cache-Control": "no-cache",
+                    _LOCAL_CLIENT_HEADER: _LOCAL_CLIENT_MARKER,
                 },
                 method="POST",
             )
