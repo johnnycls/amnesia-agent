@@ -30,7 +30,14 @@ class ModStoreTests(unittest.TestCase):
         (source / "expressions" / "neutral").mkdir(parents=True)
         (source / "expressions" / "busy").mkdir(parents=True)
         (source / "character.json").write_text(
-            json.dumps({"id": mod_id, "display_name": "Community", "default_bg": "room"}),
+            json.dumps(
+                {
+                    "id": mod_id,
+                    "display_name": "Community",
+                    "default_bg": "room",
+                    "version": version,
+                }
+            ),
             encoding="utf-8",
         )
         (source / "prompt.md").write_text("A community character.", encoding="utf-8")
@@ -106,10 +113,15 @@ class ModStoreTests(unittest.TestCase):
             new = self._archive(inbox, version="1.10.0")
             store = ModStore(root)
 
-            store.install_inbox()
+            results = store.install_inbox()
+            by_version = {item.version: item for item in results}
 
             self.assertFalse(old.exists())
             self.assertFalse(new.exists())
+            self.assertTrue(by_version["1.10.0"].installed)
+            self.assertEqual(by_version["1.10.0"].note, "")
+            self.assertFalse(by_version["1.9.0"].installed)
+            self.assertEqual(by_version["1.9.0"].note, "superseded by 1.10.0")
             self.assertEqual(
                 store.installed_manifests()["creator.character"].version, "1.10.0"
             )
@@ -131,3 +143,23 @@ class ModStoreTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+    def test_export_uses_pack_version(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            store = ModStore(root)
+            inbox = root / "inbox"
+            inbox.mkdir()
+            self._archive(inbox, mod_id="creator.character", version="2.3.4")
+            store.install_inbox()
+            pack = load_character(
+                "creator.character",
+                root=store.installed,
+                source="mod",
+                version="2.3.4",
+            )
+            # Prefer character.json version when present after we add it to archives.
+            destination = store.export_character(pack)
+            self.assertEqual(destination.name, "creator.character-2.3.4.amod")
+            self.assertTrue(destination.is_file())
+

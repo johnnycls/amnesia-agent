@@ -1,7 +1,7 @@
 # Assistant
 
 A Ren'Py visual-novel-style frontend for `amnesia-agent`. Open this folder with the
-Ren'Py launcher (separate from [`renpy/`](../renpy/)).
+Ren'Py launcher.
 
 **Locked boot** (like renpy recent-workspace auto-enter): once provider creds and a
 character choice are complete, later launches skip setup and open **Main** directly.
@@ -20,8 +20,9 @@ pip install ./local_server
 
 On first run the game gates until **both** are ready:
 
-1. **Provider** — non-empty `model` and an API key saved (blank API key on later
-   saves keeps the existing key). Prefer **Config** first when these are missing.
+1. **Provider** — non-empty `model` and an API key saved. Later Config saves omit a
+   blank API key field so the stored key is kept (clearing the key from the UI is
+   not supported). Prefer **Config** first when these are missing.
 2. **Character** — `selected_character_id` in Assistant home config matching a
    bundled pack. Prefer **Character Select** when provider is ok but character is
    missing/invalid.
@@ -55,7 +56,7 @@ Assistant/game/
   script.rpy / options.rpy
 ```
 
-Independent of `renpy/` — no cross-package imports. Patterns were copied slim
+Standalone frontend — no cross-package imports. Patterns were copied slim
 (including home JSON store with `chmod 0600` writes).
 
 ## Characters
@@ -88,7 +89,8 @@ expressions/<id>/0001.png
 ```
 
 Required manifest fields are `format` (`amnesia-character`), `schema_version` (`1`),
-`id`, `version` (semantic `major.minor.patch`), and `display_name`. Copy downloaded
+`id`, `version` (semantic `major.minor.patch`), and `display_name`. Bundled and
+exported packs also carry the same semantic `version` in `character.json`. Copy downloaded
 `.amod` files into the per-user `mods/inbox` directory. Valid archives are installed
 automatically at startup and removed from the inbox. Invalid archives remain with a
 `.error.txt` explanation. Installed mods are loaded from the Ren'Py per-user save

@@ -26,7 +26,7 @@ def create_app(
     app.add_middleware(
         CORSMiddleware,
         allow_origin_regex=(
-            r"^http://(?:localhost|127(?:\.\d{1,3}){3}|\[::1\])(?::\d+)?$"
+            r"^https?://(?:localhost|127(?:\.\d{1,3}){3}|\[::1\])(?::\d+)?$"
         ),
         allow_methods=["*"],
         allow_headers=["*"],

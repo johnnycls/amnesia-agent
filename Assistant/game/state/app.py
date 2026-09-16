@@ -854,7 +854,11 @@ class AppState:
                 "base_url": base_url,
                 "provider_params": provider_params,
             }
-            payload["api_key"] = api_key.strip()
+            # Omit blank keys so later saves keep the stored secret. Clearing is
+            # intentionally unsupported in the UI (a wiped key makes the app unusable).
+            stripped_key = api_key.strip()
+            if stripped_key:
+                payload["api_key"] = stripped_key
         except (ValueError, TypeError, json.JSONDecodeError) as error:
             self.status = f"Invalid settings: {error}"
             self._refresh()
