@@ -13,8 +13,8 @@ init python:
     app = AppState()
 
     def quit_action():
-        if app.busy:
-            app.status = "Cannot quit while the agent is busy."
+        if not app.can_quit():
+            app.status = "Cannot quit while an operation is in progress."
             renpy.restart_interaction()
             return
         app.quit_app()

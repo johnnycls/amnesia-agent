@@ -55,6 +55,9 @@ class AppState:
         self.error = ""
         self.loading_recovery = ""
         self.recovery_busy = False
+        self.operation: str | None = None
+        self.operation_id = 0
+        self.spinner_index = 0
         self.busy = False
         self.starting = False
         self.ready = False
@@ -81,9 +84,35 @@ class AppState:
 
     # --- bootstrap / loading -------------------------------------------------
 
+    def _begin_operation(self, operation: str) -> int:
+        if self.operation is not None:
+            raise RuntimeError(f"Operation already active: {self.operation}")
+        self.operation_id += 1
+        self.operation = operation
+        self.spinner_index = 0
+        self._refresh()
+        return self.operation_id
+
+    def _operation_is_current(self, operation_id: int) -> bool:
+        return self.operation is not None and self.operation_id == operation_id
+
+    def _end_operation(self, operation_id: int) -> None:
+        if self._operation_is_current(operation_id):
+            self.operation = None
+            self._refresh()
+
+    def spinner_frame(self) -> str:
+        return ("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"[self.spinner_index % 10])
+
+    def advance_spinner(self) -> None:
+        if self.operation is not None:
+            self.spinner_index = (self.spinner_index + 1) % 10
+            self._refresh()
+
     def start_loading(self) -> None:
-        if self.starting or self.ready or self.recovery_busy:
+        if self.starting or self.ready or self.operation is not None:
             return
+        operation_id = self._begin_operation("starting")
         self.starting = True
         self.page = "loading"
         self.status = "Starting local server..."
@@ -105,18 +134,18 @@ class AppState:
                 try:
                     assistant_config = self.config_store.load()
                 except ConfigError as error:
-                    invoke(self._loading_failed, error, "assistant_config")
+                    invoke(self._loading_failed, error, "assistant_config", operation_id)
                     return
                 try:
                     config = self.client.request_json("GET", "/v1/config")
                 except ApiError as error:
-                    invoke(self._loading_failed, error, "server_config")
+                    invoke(self._loading_failed, error, "server_config", operation_id)
                     return
-                invoke(self._loading_ok, packs, config, assistant_config)
+                invoke(self._loading_ok, packs, config, assistant_config, operation_id)
             except (ApiError, CharacterError, ConfigError, OSError) as error:
-                invoke(self._loading_failed, error, "")
+                invoke(self._loading_failed, error, "", operation_id)
             except Exception as error:  # noqa: BLE001
-                invoke(self._loading_failed, error)
+                invoke(self._loading_failed, error, "", operation_id)
 
         threading.Thread(target=work, name="assistant-loading", daemon=True).start()
 
@@ -125,10 +154,14 @@ class AppState:
         packs: list[CharacterPack],
         config: dict[str, Any],
         assistant_config: AssistantConfig,
+        operation_id: int,
     ) -> None:
+        if not self._operation_is_current(operation_id):
+            return
         self.starting = False
         self.recovery_busy = False
         self.loading_recovery = ""
+        self._end_operation(operation_id)
         self.ready = True
         self.characters = packs
         self.assistant_config = assistant_config
@@ -138,9 +171,14 @@ class AppState:
         self._apply_server_config(config, refresh=False)
         self._route_from_readiness(status_when_main="Ready")
 
-    def _loading_failed(self, error: Exception, recovery: str = "") -> None:
+    def _loading_failed(
+        self, error: Exception, recovery: str, operation_id: int
+    ) -> None:
+        if not self._operation_is_current(operation_id):
+            return
         self.starting = False
         self.recovery_busy = False
+        self._end_operation(operation_id)
         self.ready = False
         self.loading_recovery = recovery
         self.status = f"Server startup failed: {error}"
@@ -149,12 +187,13 @@ class AppState:
 
     def reset_server_config(self) -> None:
         """Reset corrupt local-server settings, then resume normal startup."""
-        if self.starting or self.recovery_busy or self.ready:
+        if self.starting or self.operation is not None or self.ready:
             return
         if renpy is not None and not renpy.confirm(
             "Reset server settings? This removes the stored API key and provider settings."
         ):
             return
+        operation_id = self._begin_operation("recovering_server_config")
         self.recovery_busy = True
         self.status = "Resetting server settings..."
         self.error = ""
@@ -163,20 +202,21 @@ class AppState:
         def work() -> None:
             try:
                 self.client.request_json("POST", "/v1/config/reset")
-                invoke(self._recovery_succeeded)
+                invoke(self._recovery_succeeded, operation_id)
             except Exception as error:  # noqa: BLE001
-                invoke(self._recovery_failed, error)
+                invoke(self._recovery_failed, error, operation_id)
 
         threading.Thread(target=work, name="assistant-reset-server-config", daemon=True).start()
 
     def reset_assistant_config(self) -> None:
         """Reset Assistant preferences, then resume normal startup."""
-        if self.starting or self.recovery_busy or self.ready:
+        if self.starting or self.operation is not None or self.ready:
             return
         if renpy is not None and not renpy.confirm(
             "Reset Assistant preferences? This clears the selected character and language."
         ):
             return
+        operation_id = self._begin_operation("recovering_assistant_config")
         self.recovery_busy = True
         self.status = "Resetting Assistant preferences..."
         self.error = ""
@@ -185,21 +225,26 @@ class AppState:
         def work() -> None:
             try:
                 self.config_store.reset()
-                invoke(self._recovery_succeeded)
+                invoke(self._recovery_succeeded, operation_id)
             except Exception as error:  # noqa: BLE001
-                invoke(self._recovery_failed, error)
+                invoke(self._recovery_failed, error, operation_id)
 
         threading.Thread(target=work, name="assistant-reset-preferences", daemon=True).start()
 
-    def _recovery_succeeded(self) -> None:
+    def _recovery_succeeded(self, operation_id: int) -> None:
+        if not self._operation_is_current(operation_id):
+            return
         self.recovery_busy = False
         self.error = ""
         self.status = "Settings reset. Loading..."
-        self._refresh()
+        self._end_operation(operation_id)
         self.start_loading()
 
-    def _recovery_failed(self, error: Exception) -> None:
+    def _recovery_failed(self, error: Exception, operation_id: int) -> None:
+        if not self._operation_is_current(operation_id):
+            return
         self.recovery_busy = False
+        self._end_operation(operation_id)
         self.status = f"Settings reset failed: {error}"
         self.error = str(error)
         self._refresh()
@@ -267,6 +312,8 @@ class AppState:
     def _begin_apply_character(
         self, pack: CharacterPack, *, status_when_ready: str
     ) -> None:
+        operation_id = self._begin_operation("applying_character")
+
         def work() -> None:
             try:
                 # Default workspace: omit workspace_path so server uses ~/.amnesia-agent.
@@ -276,16 +323,16 @@ class AppState:
                     "/v1/workspace/system-prompt",
                     {"content": pack.prompt},
                 )
-                invoke(self._character_ready, pack, status_when_ready)
+                invoke(self._character_ready, pack, status_when_ready, operation_id)
             except Exception as error:  # noqa: BLE001
-                invoke(self._character_failed, error)
+                invoke(self._character_failed, error, operation_id)
 
         threading.Thread(target=work, name="assistant-char-apply", daemon=True).start()
 
     # --- character select ----------------------------------------------------
 
     def select_character(self, character_id: str) -> None:
-        if self.busy or not self.ready:
+        if self.busy or self.operation is not None or not self.ready:
             return
         pack = next((c for c in self.characters if c.id == character_id), None)
         if pack is None:
@@ -314,7 +361,12 @@ class AppState:
             pack, status_when_ready=f"Playing as {pack.display_name}"
         )
 
-    def _character_ready(self, pack: CharacterPack, status: str = "") -> None:
+    def _character_ready(
+        self, pack: CharacterPack, status: str, operation_id: int
+    ) -> None:
+        if not self._operation_is_current(operation_id):
+            return
+        self._end_operation(operation_id)
         self.character = pack
         self.current_bg = pack.default_bg
         self.current_expression = pack.default_expression
@@ -325,12 +377,15 @@ class AppState:
         self.status = status or f"Playing as {pack.display_name}"
         self._refresh()
 
-    def _character_failed(self, error: Exception) -> None:
+    def _character_failed(self, error: Exception, operation_id: int) -> None:
+        if not self._operation_is_current(operation_id):
+            return
+        self._end_operation(operation_id)
         self.status = f"Character setup failed: {error}"
         self._refresh()
 
     def go_character_select(self) -> None:
-        if self.busy:
+        if self.busy or self.operation is not None:
             self.status = "Cannot switch character while busy."
             self._refresh()
             return
@@ -343,7 +398,7 @@ class AppState:
 
         Does not clear ``selected_character_id`` in Assistant home config.
         """
-        if self.busy or not self.ready:
+        if self.busy or self.operation is not None or not self.ready:
             return
         pack = self.character
         if pack is None:
@@ -356,6 +411,7 @@ class AppState:
         )
         if renpy is not None and not renpy.confirm(message):
             return
+        operation_id = self._begin_operation("resetting_workspace")
         self.status = "Resetting workspace..."
         self._refresh()
 
@@ -368,13 +424,16 @@ class AppState:
                     "/v1/workspace/system-prompt",
                     {"content": pack.prompt},
                 )
-                invoke(self._reset_ok, pack)
+                invoke(self._reset_ok, pack, operation_id)
             except Exception as error:  # noqa: BLE001
-                invoke(self._reset_failed, error)
+                invoke(self._reset_failed, error, operation_id)
 
         threading.Thread(target=work, name="assistant-reset-ws", daemon=True).start()
 
-    def _reset_ok(self, pack: CharacterPack) -> None:
+    def _reset_ok(self, pack: CharacterPack, operation_id: int) -> None:
+        if not self._operation_is_current(operation_id):
+            return
+        self._end_operation(operation_id)
         self.character = pack
         self.current_bg = pack.default_bg
         self.current_expression = pack.default_expression
@@ -385,7 +444,10 @@ class AppState:
         self.error = ""
         self._refresh()
 
-    def _reset_failed(self, error: Exception) -> None:
+    def _reset_failed(self, error: Exception, operation_id: int) -> None:
+        if not self._operation_is_current(operation_id):
+            return
+        self._end_operation(operation_id)
         self.status = f"Workspace reset failed: {error}"
         self.error = str(error)
         self._refresh()
@@ -518,7 +580,7 @@ class AppState:
     # --- config --------------------------------------------------------------
 
     def go_config(self) -> None:
-        if self.busy:
+        if self.busy or self.operation is not None:
             self.status = "Cannot open config while busy."
             self._refresh()
             return
@@ -527,6 +589,8 @@ class AppState:
         self._refresh()
 
     def leave_config(self) -> None:
+        if self.busy or self.operation is not None:
+            return
         if not self.provider_configured:
             self.status = format_config_required_status(
                 provider_config_gaps(
@@ -554,6 +618,9 @@ class AppState:
         self._refresh()
 
     def load_config_form(self) -> None:
+        if self.operation is not None:
+            return
+        operation_id = self._begin_operation("loading_config")
         if self.assistant_config is not None:
             self.settings_language = self.assistant_config.language
             self._set_store("settings_language", self.settings_language)
@@ -563,11 +630,17 @@ class AppState:
         def work() -> None:
             try:
                 config = self.client.request_json("GET", "/v1/config")
-                invoke(self._apply_server_config, config)
+                invoke(self._config_loaded, config, operation_id)
             except Exception as error:  # noqa: BLE001
-                invoke(self._config_failed, error)
+                invoke(self._config_failed, error, operation_id)
 
         threading.Thread(target=work, name="assistant-cfg-load", daemon=True).start()
+
+    def _config_loaded(self, config: dict[str, Any], operation_id: int) -> None:
+        if not self._operation_is_current(operation_id):
+            return
+        self._apply_server_config(config)
+        self._end_operation(operation_id)
 
     def _apply_server_config(
         self, config: dict[str, Any], *, refresh: bool = True
@@ -602,7 +675,7 @@ class AppState:
         base_url: str,
         provider_params_text: str,
     ) -> None:
-        if self.busy:
+        if self.busy or self.operation is not None:
             self.status = "Cannot save config while the agent is busy."
             self._refresh()
             return
@@ -634,6 +707,7 @@ class AppState:
             self.status = f"Invalid settings: {error}"
             self._refresh()
             return
+        operation_id = self._begin_operation("saving_config")
         self.status = "Saving settings..."
         self._refresh()
 
@@ -642,15 +716,21 @@ class AppState:
                 # Home store first (local, fail loud) — same order as renpy.
                 updated = self.config_store.set_language(language)
                 config = self.client.request_json("PUT", "/v1/config", payload)
-                invoke(self._config_saved, updated, config)
+                invoke(self._config_saved, updated, config, operation_id)
             except Exception as error:  # noqa: BLE001
-                invoke(self._config_failed, error)
+                invoke(self._config_failed, error, operation_id)
 
         threading.Thread(target=work, name="assistant-cfg-save", daemon=True).start()
 
     def _config_saved(
-        self, assistant_config: AssistantConfig, config: dict[str, Any]
+        self,
+        assistant_config: AssistantConfig,
+        config: dict[str, Any],
+        operation_id: int,
     ) -> None:
+        if not self._operation_is_current(operation_id):
+            return
+        self._end_operation(operation_id)
         self.assistant_config = assistant_config
         self.settings_language = assistant_config.language
         self._set_store("settings_language", self.settings_language)
@@ -664,7 +744,10 @@ class AppState:
         # Provider ok → Main if character selected+valid, else Character Select.
         self._route_from_readiness(status_when_main="Settings saved")
 
-    def _config_failed(self, error: Exception) -> None:
+    def _config_failed(self, error: Exception, operation_id: int) -> None:
+        if not self._operation_is_current(operation_id):
+            return
+        self._end_operation(operation_id)
         self.status = f"Config error: {error}"
         self.error = str(error)
         self._refresh()
@@ -680,11 +763,11 @@ class AppState:
     # --- quit ----------------------------------------------------------------
 
     def can_quit(self) -> bool:
-        return not self.busy
+        return not self.busy and self.operation is None
 
     def quit_app(self) -> None:
-        if self.busy:
-            self.status = "Cannot quit while the agent is busy."
+        if not self.can_quit():
+            self.status = "Cannot quit while an operation is in progress."
             self._refresh()
             return
         self.server.stop()

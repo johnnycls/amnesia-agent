@@ -78,6 +78,20 @@ class StartupRecoveryTests(unittest.TestCase):
             self.assertFalse(app.recovery_busy)
             self.assertFalse(app.ready)
 
+    def test_stale_loading_callback_is_ignored(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            app = self._app(AssistantConfigStore(directory))
+            first = app._begin_operation("loading_config")
+            app._end_operation(first)
+            second = app._begin_operation("saving_config")
+            app.status = "Saving settings..."
+
+            app._loading_failed(RuntimeError("stale"), "", first)
+
+            self.assertEqual(app.operation_id, second)
+            self.assertEqual(app.operation, "saving_config")
+            self.assertEqual(app.status, "Saving settings...")
+
     def test_server_config_reset_reloads_startup(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = AssistantConfigStore(directory)

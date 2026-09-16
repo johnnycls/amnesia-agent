@@ -36,3 +36,28 @@ screen app_shell():
                     use config_page
                 else:
                     text "Unknown page" style "app_text"
+
+    if app.operation:
+        use operation_overlay
+
+screen operation_overlay():
+    modal True
+    zorder 100
+
+    add Solid("#000000bb")
+
+    frame:
+        xalign 0.5
+        yalign 0.5
+        xmaximum 620
+        xfill True
+        padding (36, 30)
+        background "#101820ee"
+
+        vbox:
+            spacing 16
+            xalign 0.5
+            text "[app.spinner_frame()]" size 48 xalign 0.5
+            text app.status style "app_text" xalign 0.5 textalign 0.5
+            text "Please wait..." style "app_small" xalign 0.5
+            timer 0.12 repeat True action Function(app.advance_spinner)
