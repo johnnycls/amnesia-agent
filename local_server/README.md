@@ -135,7 +135,10 @@ When `response_format` is omitted or `null`, the server passes `None` to
 forwarded unchanged to the kernel.
 
 Server-Sent Events stream. Kernel `turn` yields `str` deltas and role messages
-(`AllMessageValues`); the server maps them as:
+(`AllMessageValues`); the server maps them as. While the provider/tool call is
+quiet, the server emits an SSE comment heartbeat every 15 seconds so clients can
+distinguish a slow turn from a dead connection; clients should ignore comment
+lines:
 
 ```text
 data: {"type":"delta","data":{"text":"..."}}
@@ -144,6 +147,8 @@ data: {"type":"assistant","data":{"content":"...","tool_calls":[...]}}
 data: {"type":"tool_result","data":{"content":"..."}}
 data: {"type":"done","data":{}}
 data: {"type":"error","data":{"error_type":"...","message":"..."}}
+: heartbeat
+
 ```
 
 - **All** assistant role messages use `type: "assistant"` with `tool_calls` in

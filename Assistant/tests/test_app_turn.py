@@ -11,6 +11,7 @@ from typing import Any
 GAME = Path(__file__).parents[1] / "game"
 sys.path.insert(0, str(GAME))
 
+from api.client import TurnTimeoutError  # noqa: E402
 from state.app import AppState  # noqa: E402
 
 
@@ -83,6 +84,15 @@ class TurnLifecycleTests(unittest.TestCase):
         self.assertTrue(app.busy)
         self.assertIs(app.turn_handle, second["handle"])
         self.assertEqual(app.active_turn_id, app.turn_id)
+
+    def test_timeout_has_specific_retryable_status(self) -> None:
+        app, client = self._app()
+        app.send("slow request")
+        client.calls[0]["on_error"](TurnTimeoutError("timed out"))
+
+        self.assertFalse(app.busy)
+        self.assertIn("Connection timed out", app.status)
+        self.assertIn("may still be working", app.status)
 
     def test_old_transport_error_is_ignored_after_new_turn(self) -> None:
         app, client = self._app()

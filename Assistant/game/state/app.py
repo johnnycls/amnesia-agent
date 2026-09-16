@@ -6,7 +6,7 @@ import json
 import threading
 from typing import Any
 
-from api.client import ApiError, Client, TurnHandle, invoke
+from api.client import ApiError, Client, TurnHandle, TurnTimeoutError, invoke
 from characters.loader import CharacterError, CharacterPack, load_all_characters
 from home_config.store import (
     DEFAULT_LANGUAGE,
@@ -586,7 +586,12 @@ class AppState:
         self.busy = False
         self._sync_stage_paths()
         self.last_assistant_choices = []
-        self.status = "Request failed"
+        if isinstance(error, TurnTimeoutError):
+            self.status = (
+                "Connection timed out. The provider may still be working."
+            )
+        else:
+            self.status = "Request failed"
         self._refresh()
 
     def _on_complete(self, turn_id: int) -> None:

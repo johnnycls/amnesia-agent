@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import socket
 import threading
 from collections.abc import Callable
 from typing import Any
@@ -20,11 +21,17 @@ except ImportError:
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
+TURN_CONNECT_TIMEOUT_SECONDS = 10.0
+TURN_IDLE_TIMEOUT_SECONDS = 120.0
 _TURN_EVENT_TYPES = frozenset({"delta", "assistant", "tool_result", "error", "done"})
 
 
 class ApiError(RuntimeError):
     """Raised when the local server cannot be reached or returns an error."""
+
+
+class TurnTimeoutError(ApiError):
+    """Raised when a turn cannot connect or produces no data for too long."""
 
 
 class TurnHandle:
@@ -141,7 +148,8 @@ class Client:
                 method="POST",
             )
             try:
-                with urlopen(request, timeout=None) as response:
+                with urlopen(request, timeout=TURN_CONNECT_TIMEOUT_SECONDS) as response:
+                    _set_response_timeout(response, TURN_IDLE_TIMEOUT_SECONDS)
                     handle.attach(response)
                     terminal = False
                     for raw_event in parse_sse(response):
@@ -163,6 +171,13 @@ class Client:
                         invoke(on_error, ApiError(_http_error_detail(error)))
                     elif isinstance(error, SseError):
                         invoke(on_error, ApiError(str(error)))
+                    elif _is_timeout_error(error):
+                        invoke(
+                            on_error,
+                            TurnTimeoutError(
+                                "Connection timed out while waiting for the provider."
+                            ),
+                        )
                     else:
                         invoke(on_error, ApiError(f"Turn request failed: {error}"))
             except Exception as error:  # noqa: BLE001 — surface to UI
@@ -175,6 +190,22 @@ class Client:
 
         threading.Thread(target=run, name="assistant-turn", daemon=True).start()
         return handle
+
+
+def _set_response_timeout(response: Any, timeout: float) -> None:
+    """Switch the connected urllib socket from connect to idle timeout."""
+    try:
+        socket_object = response.fp.raw._sock
+        socket_object.settimeout(timeout)
+    except (AttributeError, OSError):
+        # Test doubles and alternate urllib handlers may not expose the socket.
+        pass
+
+
+def _is_timeout_error(error: BaseException) -> bool:
+    if isinstance(error, (TimeoutError, socket.timeout)):
+        return True
+    return isinstance(error, URLError) and isinstance(error.reason, (TimeoutError, socket.timeout))
 
 
 def validate_turn_event(event: dict[str, Any]) -> dict[str, Any]:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import aclosing
 from typing import Any
@@ -10,6 +11,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from amnesia_agent_local_server.constants import SSE_HEARTBEAT_SECONDS
 from amnesia_agent_local_server.sse import encode_sse
 
 # Empty path "" (not "/") so mount is /v1/turn without a trailing slash.
@@ -36,13 +38,46 @@ async def turn(turn_request: TurnRequest, request: Request) -> StreamingResponse
 
     async def stream() -> AsyncIterator[str]:
         async with aclosing(events):
-            async for event in events:
-                if await request.is_disconnected():
-                    break
-                yield encode_sse(event)
+            async for frame in stream_sse(
+                events,
+                request,
+                heartbeat_seconds=SSE_HEARTBEAT_SECONDS,
+            ):
+                yield frame
 
     return StreamingResponse(
         stream(),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+async def stream_sse(
+    events: AsyncIterator[dict[str, Any]],
+    request: Request,
+    *,
+    heartbeat_seconds: float,
+) -> AsyncIterator[str]:
+    """Encode events while keeping quiet SSE connections alive."""
+    next_event: asyncio.Task[dict[str, Any]] | None = asyncio.create_task(events.__anext__())
+    try:
+        while next_event is not None:
+            done, _pending = await asyncio.wait({next_event}, timeout=heartbeat_seconds)
+            if not done:
+                if await request.is_disconnected():
+                    return
+                yield ": heartbeat\n\n"
+                continue
+            try:
+                event = next_event.result()
+            except StopAsyncIteration:
+                return
+            if await request.is_disconnected():
+                return
+            yield encode_sse(event)
+            next_event = asyncio.create_task(events.__anext__())
+    finally:
+        if next_event is not None and not next_event.done():
+            next_event.cancel()
+        if next_event is not None:
+            await asyncio.gather(next_event, return_exceptions=True)

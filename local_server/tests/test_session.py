@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 
 from amnesia_agent_local_server.app import create_app
 from amnesia_agent_local_server.config import ConfigStore
+from amnesia_agent_local_server.routes.turn import stream_sse
 from amnesia_agent_local_server.session import SessionManager, TurnBusyError
 from amnesia_agent_local_server.sse import event_envelope
 
@@ -118,6 +119,27 @@ def _write_config(store: ConfigStore, extra: dict[str, object] | None = None) ->
 
 
 class SseTests(unittest.TestCase):
+    def test_heartbeat_is_emitted_while_event_stream_is_quiet(self) -> None:
+        class Request:
+            async def is_disconnected(self) -> bool:
+                return False
+
+        async def delayed_events():
+            await asyncio.sleep(0.02)
+            yield {"type": "done", "data": {}}
+
+        async def collect() -> list[str]:
+            return [
+                frame
+                async for frame in stream_sse(
+                    delayed_events(), Request(), heartbeat_seconds=0.005
+                )
+            ]
+
+        frames = asyncio.run(collect())
+        self.assertIn(": heartbeat\n\n", frames)
+        self.assertTrue(any(frame.startswith("data: ") for frame in frames))
+
     def test_event_envelope_parses_structured_answer(self) -> None:
         payload = event_envelope(
             {"role": "assistant", "content": '{"answer":"Choose", "choices":["A", "B"]}'}
