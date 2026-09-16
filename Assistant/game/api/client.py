@@ -20,6 +20,7 @@ except ImportError:
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
+_TURN_EVENT_TYPES = frozenset({"delta", "assistant", "tool_result", "error", "done"})
 
 
 class ApiError(RuntimeError):
@@ -142,14 +143,19 @@ class Client:
             try:
                 with urlopen(request, timeout=None) as response:
                     handle.attach(response)
-                    for event in parse_sse(response):
+                    terminal = False
+                    for raw_event in parse_sse(response):
                         if handle.cancelled:
                             return
+                        event = validate_turn_event(raw_event)
                         invoke(on_event, event)
-                        if event.get("type") == "done":
+                        if event.get("type") in ("done", "error"):
+                            terminal = True
+                            if event.get("type") == "error":
+                                need_complete = False
                             return
-                        if event.get("type") == "error":
-                            return
+                    if not handle.cancelled and not terminal:
+                        raise SseError("Turn stream ended without a terminal event")
             except (HTTPError, URLError, OSError, SseError) as error:
                 if not handle.cancelled:
                     need_complete = False
@@ -169,6 +175,30 @@ class Client:
 
         threading.Thread(target=run, name="assistant-turn", daemon=True).start()
         return handle
+
+
+def validate_turn_event(event: dict[str, Any]) -> dict[str, Any]:
+    """Validate the small event contract consumed by the Assistant UI."""
+    event_type = event.get("type")
+    data = event.get("data")
+    if event_type not in _TURN_EVENT_TYPES:
+        raise SseError(f"Local server returned unknown turn event: {event_type!r}")
+    if not isinstance(data, dict):
+        raise SseError(f"Turn event {event_type!r} data must be an object")
+    if event_type == "delta" and not isinstance(data.get("text"), str):
+        raise SseError("Turn delta event text must be a string")
+    if event_type == "assistant":
+        content = data.get("content")
+        if content is not None and not isinstance(content, str):
+            raise SseError("Assistant event content must be a string or null")
+        tool_calls = data.get("tool_calls")
+        if tool_calls is not None and not isinstance(tool_calls, list):
+            raise SseError("Assistant event tool_calls must be an array")
+    elif event_type == "tool_result" and not isinstance(data.get("content"), str):
+        raise SseError("Tool result event content must be a string")
+    elif event_type == "error" and not isinstance(data.get("message"), str):
+        raise SseError("Turn error event message must be a string")
+    return event
 
 
 def _http_error_detail(error: HTTPError) -> str:

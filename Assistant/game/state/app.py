@@ -72,6 +72,8 @@ class AppState:
         self.last_assistant_text = ""
         self.last_assistant_choices: list[str] = []
         self.turn_handle: TurnHandle | None = None
+        self.turn_id = 0
+        self.active_turn_id: int | None = None
         self.input_text = ""
 
         self.settings_model = ""
@@ -464,41 +466,56 @@ class AppState:
         self.input_text = ""
         self._set_store("input_text", "")
         self.last_assistant_choices = []
+        self.turn_id += 1
+        turn_id = self.turn_id
+        self.active_turn_id = turn_id
         self.busy = True
         self._sync_stage_paths()
         self.status = "Thinking..."
         self._refresh()
         self.turn_handle = self.client.stream_turn(
             text,
-            self._on_event,
-            self._on_error,
-            self._on_complete,
+            lambda event, turn_id=turn_id: self._on_event(turn_id, event),
+            lambda error, turn_id=turn_id: self._on_error(turn_id, error),
+            lambda turn_id=turn_id: self._on_complete(turn_id),
         )
 
     def choose(self, choice: str) -> None:
         self.send(choice)
 
     def cancel(self) -> None:
-        # Only signal the stream to stop; busy clears in _on_complete / _on_error
-        # once the SSE thread finishes (socket close / cancelled loop exit).
-        if self.turn_handle is None:
+        # Only signal the stream to stop; the terminal callback clears busy.
+        if self.turn_handle is None or self.active_turn_id is None:
             return
         self.turn_handle.cancel()
         self.status = "Cancelling..."
         self._refresh()
 
-    def _cancel_requested(self) -> bool:
-        return self.turn_handle is not None and self.turn_handle.cancelled
+    def _turn_is_current(self, turn_id: int) -> bool:
+        return self.busy and self.active_turn_id == turn_id
 
-    def _finish_cancelled(self) -> None:
+    def _cancel_requested(self, turn_id: int) -> bool:
+        return (
+            self._turn_is_current(turn_id)
+            and self.turn_handle is not None
+            and self.turn_handle.cancelled
+        )
+
+    def _finish_cancelled(self, turn_id: int) -> None:
+        if not self._turn_is_current(turn_id):
+            return
         self.busy = False
         self.turn_handle = None
+        self.active_turn_id = None
         self._sync_stage_paths()
         self.status = "Cancelled"
         self._refresh()
 
-    def _on_event(self, event: dict[str, Any]) -> None:
-        if self._cancel_requested():
+    def _on_event(self, turn_id: int, event: dict[str, Any]) -> None:
+        if not self._turn_is_current(turn_id):
+            return
+        if self._cancel_requested(turn_id):
+            self._finish_cancelled(turn_id)
             return
         event_type = event.get("type")
         data = event.get("data")
@@ -515,15 +532,21 @@ class AppState:
         elif event_type == "tool_result":
             self.status = "Thinking..."
         elif event_type == "error":
-            message = data.get("message", "Unknown error")
-            self.last_assistant_text = f"Error: {message}"
+            request_id = data.get("request_id")
             self.last_assistant_choices = []
             self.busy = False
+            self.turn_handle = None
+            self.active_turn_id = None
             self._sync_stage_paths()
-            self.status = "Request failed"
+            self.status = (
+                f"Request failed (reference: {request_id})"
+                if isinstance(request_id, str) and request_id
+                else "Request failed"
+            )
         elif event_type == "done":
             self.busy = False
             self.turn_handle = None
+            self.active_turn_id = None
             self._sync_stage_paths()
             if not self.status.startswith("Warning"):
                 self.status = "Ready"
@@ -552,24 +575,29 @@ class AppState:
         else:
             self.status = "Ready"
 
-    def _on_error(self, error: Exception) -> None:
-        if self._cancel_requested():
-            self._finish_cancelled()
+    def _on_error(self, turn_id: int, error: Exception) -> None:
+        if not self._turn_is_current(turn_id):
+            return
+        if self._cancel_requested(turn_id):
+            self._finish_cancelled(turn_id)
             return
         self.turn_handle = None
+        self.active_turn_id = None
         self.busy = False
         self._sync_stage_paths()
-        self.last_assistant_text = f"Error: {error}"
         self.last_assistant_choices = []
         self.status = "Request failed"
         self._refresh()
 
-    def _on_complete(self) -> None:
-        if self._cancel_requested():
-            self._finish_cancelled()
+    def _on_complete(self, turn_id: int) -> None:
+        if not self._turn_is_current(turn_id):
+            return
+        if self._cancel_requested(turn_id):
+            self._finish_cancelled(turn_id)
             return
         self.busy = False
         self.turn_handle = None
+        self.active_turn_id = None
         self._sync_stage_paths()
         if self.status not in ("Request failed",) and not self.status.startswith(
             "Warning"
