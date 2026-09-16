@@ -33,7 +33,7 @@ CLI refuses every non-loopback bind host (`0.0.0.0`, `::`, LAN IPs, …). There 
 no remote-binding escape hatch. Loopback hosts: `127.0.0.1`, `localhost`, `::1`
 (and other addresses in the loopback ranges).
 
-Browser clients may connect from `http://localhost`, `http://127.0.0.1`, or
+Browser clients may connect from `http(s)://localhost`, `http(s)://127.0.0.1`, or
 `http://[::1]` on any port. Requests with an explicit non-loopback or `null`
 `Origin` are rejected. State-changing requests without an `Origin` must include
 `X-Amnesia-Client: local`; the Assistant sends this marker automatically. This
