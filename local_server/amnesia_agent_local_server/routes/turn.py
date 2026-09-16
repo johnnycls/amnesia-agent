@@ -61,7 +61,10 @@ async def stream_sse(
     heartbeat_seconds: float,
 ) -> AsyncIterator[str]:
     """Encode events while keeping quiet SSE connections alive."""
-    next_event: asyncio.Task[dict[str, Any]] | None = asyncio.create_task(events.__anext__())
+    async def next_event_value() -> dict[str, Any]:
+        return await events.__anext__()
+
+    next_event: asyncio.Task[dict[str, Any]] | None = asyncio.create_task(next_event_value())
     try:
         while next_event is not None:
             done, _pending = await asyncio.wait({next_event}, timeout=heartbeat_seconds)
@@ -77,7 +80,7 @@ async def stream_sse(
             if await request.is_disconnected():
                 return
             yield encode_sse(event)
-            next_event = asyncio.create_task(events.__anext__())
+            next_event = asyncio.create_task(next_event_value())
     finally:
         if next_event is not None and not next_event.done():
             next_event.cancel()
