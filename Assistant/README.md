@@ -39,6 +39,8 @@ Set `AMNESIA_AGENT_PYTHON` if the game must spawn a specific Python for
    - **Both ready** → apply character (setup-or-repair, PUT prompt, assets) → **Main**
    - Missing model/API key → **Config** (cannot proceed without save success)
    - Missing/invalid character → **Character Select**
+   - Corrupt Assistant preferences → offer **Reset Assistant preferences**, then reload setup
+   - Corrupt local-server settings → offer **Reset server settings** (clears provider credentials), then reload setup
 
 ## Architecture
 

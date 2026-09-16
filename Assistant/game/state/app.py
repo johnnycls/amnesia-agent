@@ -53,6 +53,8 @@ class AppState:
         self.page = "loading"
         self.status = ""
         self.error = ""
+        self.loading_recovery = ""
+        self.recovery_busy = False
         self.busy = False
         self.starting = False
         self.ready = False
@@ -80,12 +82,13 @@ class AppState:
     # --- bootstrap / loading -------------------------------------------------
 
     def start_loading(self) -> None:
-        if self.starting or self.ready:
+        if self.starting or self.ready or self.recovery_busy:
             return
         self.starting = True
         self.page = "loading"
         self.status = "Starting local server..."
         self.error = ""
+        self.loading_recovery = ""
         self._refresh()
 
         def work() -> None:
@@ -99,11 +102,19 @@ class AppState:
                     raise CharacterError(
                         f"Expected at least two character packs, found {len(packs)}"
                     )
-                assistant_config = self.config_store.load()
-                config = self.client.request_json("GET", "/v1/config")
+                try:
+                    assistant_config = self.config_store.load()
+                except ConfigError as error:
+                    invoke(self._loading_failed, error, "assistant_config")
+                    return
+                try:
+                    config = self.client.request_json("GET", "/v1/config")
+                except ApiError as error:
+                    invoke(self._loading_failed, error, "server_config")
+                    return
                 invoke(self._loading_ok, packs, config, assistant_config)
             except (ApiError, CharacterError, ConfigError, OSError) as error:
-                invoke(self._loading_failed, error)
+                invoke(self._loading_failed, error, "")
             except Exception as error:  # noqa: BLE001
                 invoke(self._loading_failed, error)
 
@@ -116,6 +127,8 @@ class AppState:
         assistant_config: AssistantConfig,
     ) -> None:
         self.starting = False
+        self.recovery_busy = False
+        self.loading_recovery = ""
         self.ready = True
         self.characters = packs
         self.assistant_config = assistant_config
@@ -125,10 +138,69 @@ class AppState:
         self._apply_server_config(config, refresh=False)
         self._route_from_readiness(status_when_main="Ready")
 
-    def _loading_failed(self, error: Exception) -> None:
+    def _loading_failed(self, error: Exception, recovery: str = "") -> None:
         self.starting = False
+        self.recovery_busy = False
         self.ready = False
+        self.loading_recovery = recovery
         self.status = f"Server startup failed: {error}"
+        self.error = str(error)
+        self._refresh()
+
+    def reset_server_config(self) -> None:
+        """Reset corrupt local-server settings, then resume normal startup."""
+        if self.starting or self.recovery_busy or self.ready:
+            return
+        if renpy is not None and not renpy.confirm(
+            "Reset server settings? This removes the stored API key and provider settings."
+        ):
+            return
+        self.recovery_busy = True
+        self.status = "Resetting server settings..."
+        self.error = ""
+        self._refresh()
+
+        def work() -> None:
+            try:
+                self.client.request_json("POST", "/v1/config/reset")
+                invoke(self._recovery_succeeded)
+            except Exception as error:  # noqa: BLE001
+                invoke(self._recovery_failed, error)
+
+        threading.Thread(target=work, name="assistant-reset-server-config", daemon=True).start()
+
+    def reset_assistant_config(self) -> None:
+        """Reset Assistant preferences, then resume normal startup."""
+        if self.starting or self.recovery_busy or self.ready:
+            return
+        if renpy is not None and not renpy.confirm(
+            "Reset Assistant preferences? This clears the selected character and language."
+        ):
+            return
+        self.recovery_busy = True
+        self.status = "Resetting Assistant preferences..."
+        self.error = ""
+        self._refresh()
+
+        def work() -> None:
+            try:
+                self.config_store.reset()
+                invoke(self._recovery_succeeded)
+            except Exception as error:  # noqa: BLE001
+                invoke(self._recovery_failed, error)
+
+        threading.Thread(target=work, name="assistant-reset-preferences", daemon=True).start()
+
+    def _recovery_succeeded(self) -> None:
+        self.recovery_busy = False
+        self.error = ""
+        self.status = "Settings reset. Loading..."
+        self._refresh()
+        self.start_loading()
+
+    def _recovery_failed(self, error: Exception) -> None:
+        self.recovery_busy = False
+        self.status = f"Settings reset failed: {error}"
         self.error = str(error)
         self._refresh()
 
