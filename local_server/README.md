@@ -29,10 +29,9 @@ amnesia-agent-local-server --host 127.0.0.1 --port 8765
 ```
 
 **Local-trust / loopback:** this server has **no** instance or bearer auth. The
-CLI refuses non-loopback bind hosts (`0.0.0.0`, `::`, LAN IPs, …) unless you
-pass `--allow-remote`. With `--allow-remote` it starts but prints a stderr
-warning that the process is unsafe off loopback. Loopback hosts: `127.0.0.1`,
-`localhost`, `::1` (and other addresses in the loopback ranges).
+CLI refuses every non-loopback bind host (`0.0.0.0`, `::`, LAN IPs, …). There is
+no remote-binding escape hatch. Loopback hosts: `127.0.0.1`, `localhost`, `::1`
+(and other addresses in the loopback ranges).
 
 This server exposes the kernel's unrestricted local shell tool. Keep it on
 loopback and run it only on a trusted machine.

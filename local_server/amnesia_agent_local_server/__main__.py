@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import ipaddress
-import sys
 import uuid
 
 import uvicorn
@@ -41,27 +40,13 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--port", default=8765, type=int)
     parser.add_argument("--log-level", default="info")
     parser.add_argument("--instance-id", default=None)
-    parser.add_argument(
-        "--allow-remote",
-        action="store_true",
-        help=(
-            "Allow binding to a non-loopback host. Unsafe: this server has no "
-            "authentication."
-        ),
-    )
     args = parser.parse_args(argv)
 
     if not is_loopback_host(args.host):
-        if not args.allow_remote:
-            parser.error(
-                f"Refusing to bind to non-loopback host {args.host!r}. "
-                "Use a loopback address (127.0.0.1, localhost, ::1) "
-                "or pass --allow-remote (unsafe: this server has no authentication)."
-            )
-        print(
-            "WARNING: Binding to non-loopback host without authentication. "
-            "This server has no auth and is unsafe on non-loopback interfaces.",
-            file=sys.stderr,
+        parser.error(
+            f"Refusing to bind to non-loopback host {args.host!r}. "
+            "Only loopback addresses (127.0.0.1, localhost, ::1, or a loopback "
+            "range address) are supported."
         )
 
     application = create_app(instance_id=args.instance_id or uuid.uuid4().hex)
