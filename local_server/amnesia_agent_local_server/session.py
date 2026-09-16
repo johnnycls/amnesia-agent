@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Mapping, Sequence
 from contextlib import aclosing
 from typing import Any
@@ -26,9 +28,23 @@ from amnesia_agent_local_server.config import (
 from amnesia_agent_local_server.constants import API_VERSION
 from amnesia_agent_local_server.sse import event_envelope
 
+logger = logging.getLogger(__name__)
+
 
 class TurnBusyError(Exception):
     """Raised when an operation cannot run while a turn is active."""
+
+
+def _error_event(error_type: str, message: str, request_id: str) -> dict[str, Any]:
+    """Build one terminal SSE error envelope with a support reference."""
+    return {
+        "type": "error",
+        "data": {
+            "error_type": error_type,
+            "message": message,
+            "request_id": request_id,
+        },
+    }
 
 
 def resolved_workspace_key(workspace_path: str | None) -> str:
@@ -204,7 +220,8 @@ class SessionManager:
         if key in self._active:
             raise TurnBusyError("Another turn is already active for this workspace")
         self._active[key] = None
-        return self._stream_turn(user_input, response_format, workspace_path, key)
+        request_id = uuid.uuid4().hex[:12]
+        return self._stream_turn(user_input, response_format, workspace_path, key, request_id)
 
     async def _stream_turn(
         self,
@@ -212,27 +229,34 @@ class SessionManager:
         response_format: Mapping[str, Any] | None,
         workspace_path: str | None,
         key: str,
+        request_id: str,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Yield SSE envelopes for one turn; release the path slot in ``finally``."""
         try:
-            session = self.build_session(workspace_path=workspace_path)
-            turn_events = session.turn(user_input, response_format=response_format)
-            self._active[key] = turn_events
             try:
+                session = self.build_session(workspace_path=workspace_path)
+                turn_events = session.turn(user_input, response_format=response_format)
+                self._active[key] = turn_events
                 async with aclosing(turn_events):
                     async for event in turn_events:
                         yield event_envelope(event)
                     yield {"type": "done", "data": {}}
             except AgentError as error:
-                yield {
-                    "type": "error",
-                    "data": {"error_type": type(error).__name__, "message": str(error)},
-                }
-            except ValueError as error:
-                yield {
-                    "type": "error",
-                    "data": {"error_type": "ServerError", "message": str(error)},
-                }
+                yield _error_event(type(error).__name__, str(error), request_id)
+            except ValueError:
+                logger.exception("Turn %s failed with an unexpected value error", request_id)
+                yield _error_event(
+                    "InternalServerError",
+                    "The turn failed unexpectedly.",
+                    request_id,
+                )
+            except Exception:
+                logger.exception("Turn %s failed unexpectedly", request_id)
+                yield _error_event(
+                    "InternalServerError",
+                    "The turn failed unexpectedly.",
+                    request_id,
+                )
         finally:
             self._active.pop(key, None)
 

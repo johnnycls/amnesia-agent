@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from typing import ClassVar
 from unittest.mock import patch
 
+from amnesia_agent_kernel import ConfigError
 from fastapi.testclient import TestClient
 
 from amnesia_agent_local_server.app import create_app
@@ -175,6 +176,58 @@ class SessionTests(unittest.TestCase):
         ClosingFakeSession.created = []
         HoldingFakeSession.created = []
         HoldingFakeSession.gates = {}
+
+    def test_setup_failure_is_sse_error_and_releases_slot(self) -> None:
+        async def run() -> list[dict[str, object]]:
+            with tempfile.TemporaryDirectory() as directory:
+                store = ConfigStore(directory)
+                _write_config(store)
+                manager = SessionManager(store)
+                with patch.object(
+                    manager,
+                    "build_session",
+                    side_effect=ConfigError("configuration is invalid"),
+                ):
+                    events_agen = manager.start_turn("hello")
+                    async with aclosing(events_agen):
+                        events = [event async for event in events_agen]
+                self.assertFalse(manager.active_turn)
+                return events
+
+        events = asyncio.run(run())
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["type"], "error")
+        self.assertEqual(events[0]["data"]["error_type"], "ConfigError")  # type: ignore[index]
+        self.assertEqual(
+            events[0]["data"]["message"], "configuration is invalid"  # type: ignore[index]
+        )
+        self.assertIsInstance(events[0]["data"]["request_id"], str)  # type: ignore[index]
+
+    def test_unexpected_setup_failure_is_safe_sse_error(self) -> None:
+        async def run() -> list[dict[str, object]]:
+            with tempfile.TemporaryDirectory() as directory:
+                store = ConfigStore(directory)
+                _write_config(store)
+                manager = SessionManager(store)
+                with patch.object(
+                    manager,
+                    "build_session",
+                    side_effect=RuntimeError("secret provider details"),
+                ):
+                    events_agen = manager.start_turn("hello")
+                    async with aclosing(events_agen):
+                        events = [event async for event in events_agen]
+                self.assertFalse(manager.active_turn)
+                return events
+
+        events = asyncio.run(run())
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["type"], "error")
+        data = events[0]["data"]
+        self.assertEqual(data["error_type"], "InternalServerError")  # type: ignore[index]
+        self.assertEqual(data["message"], "The turn failed unexpectedly.")  # type: ignore[index]
+        self.assertNotIn("secret provider details", str(events))
+        self.assertIsInstance(data["request_id"], str)  # type: ignore[index]
 
     def test_stream_turn_emits_done_and_releases_slot(self) -> None:
         async def run() -> list[dict[str, object]]:
