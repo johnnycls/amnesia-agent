@@ -258,7 +258,7 @@ class ProviderParamsRedactTests(unittest.TestCase):
 
 
 class ApiKeyUpdateTests(unittest.TestCase):
-    def test_blank_api_key_leaves_stored_key_unchanged(self) -> None:
+    def test_blank_api_key_clears_stored_key(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = ConfigStore(directory)
             store.path.parent.mkdir(parents=True, exist_ok=True)
@@ -269,10 +269,10 @@ class ApiKeyUpdateTests(unittest.TestCase):
             client = TestClient(create_app(store))
             response = client.put("/v1/config", json={"model": "openai/other", "api_key": ""})
             self.assertEqual(response.status_code, 200)
-            self.assertTrue(response.json()["api_key_set"])
+            self.assertFalse(response.json()["api_key_set"])
             loaded = store.load()
             self.assertEqual(loaded.provider.model, "openai/other")
-            self.assertEqual(loaded.provider.api_key, "secret-key")
+            self.assertIsNone(loaded.provider.api_key)
 
     def test_api_key_clear_removes_stored_key(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -283,29 +283,13 @@ class ApiKeyUpdateTests(unittest.TestCase):
                 encoding="utf-8",
             )
             client = TestClient(create_app(store))
-            response = client.put("/v1/config", json={"api_key_clear": True})
+            response = client.put("/v1/config", json={"api_key": ""})
             self.assertEqual(response.status_code, 200)
             body = response.json()
             self.assertFalse(body["api_key_set"])
             self.assertIsNone(body["api_key"])
             loaded = store.load()
             self.assertIsNone(loaded.provider.api_key)
-
-    def test_api_key_clear_with_new_key_fails_loud(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            store = ConfigStore(directory)
-            store.path.parent.mkdir(parents=True, exist_ok=True)
-            store.path.write_text(
-                json.dumps({"model": "openai/test", "api_key": "secret-key"}),
-                encoding="utf-8",
-            )
-            client = TestClient(create_app(store), raise_server_exceptions=False)
-            response = client.put(
-                "/v1/config",
-                json={"api_key_clear": True, "api_key": "new-secret"},
-            )
-            self.assertEqual(response.status_code, 400)
-            self.assertIn("api_key_clear", response.json()["detail"])
 
     @unittest.skipIf(
         os.name == "nt",

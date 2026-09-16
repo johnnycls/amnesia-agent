@@ -10,7 +10,6 @@ from typing import Any
 
 from amnesia_agent_kernel import (
     AgentError,
-    ConfigError,
     ExecutionPolicy,
     KernelSession,
     ProviderConfig,
@@ -200,6 +199,7 @@ class SessionManager:
         user_input: str,
         response_format: Mapping[str, Any] | None = None,
         workspace_path: str | None = None,
+        system_prompt_prefix: str = "",
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Acquire the path slot and return the SSE envelope stream.
 
@@ -221,13 +221,21 @@ class SessionManager:
             raise TurnBusyError("Another turn is already active for this workspace")
         self._active[key] = None
         request_id = uuid.uuid4().hex[:12]
-        return self._stream_turn(user_input, response_format, workspace_path, key, request_id)
+        return self._stream_turn(
+            user_input,
+            response_format,
+            workspace_path,
+            system_prompt_prefix,
+            key,
+            request_id,
+        )
 
     async def _stream_turn(
         self,
         user_input: str,
         response_format: Mapping[str, Any] | None,
         workspace_path: str | None,
+        system_prompt_prefix: str,
         key: str,
         request_id: str,
     ) -> AsyncGenerator[dict[str, Any], None]:
@@ -235,7 +243,11 @@ class SessionManager:
         try:
             try:
                 session = self.build_session(workspace_path=workspace_path)
-                turn_events = session.turn(user_input, response_format=response_format)
+                turn_events = session.turn(
+                    user_input,
+                    response_format=response_format,
+                    system_prompt_prefix=system_prompt_prefix,
+                )
                 self._active[key] = turn_events
                 async with aclosing(turn_events):
                     async for event in turn_events:
@@ -274,15 +286,10 @@ def _merge_config(current: LoadedConfig, fields: Mapping[str, Any]) -> LoadedCon
     if model is None:
         model = current.provider.model
 
-    clear_key = bool(fields.get("api_key_clear"))
-    has_api_key = "api_key" in fields and fields["api_key"] not in (None, "")
-    if clear_key and has_api_key:
-        raise ConfigError("Cannot set api_key and api_key_clear in the same update.")
-    api_key = current.provider.api_key
-    if clear_key:
-        api_key = None
-    elif has_api_key:
-        api_key = fields["api_key"]
+    if "api_key" in fields:
+        api_key = fields["api_key"] or None
+    else:
+        api_key = current.provider.api_key
 
     if "base_url" in fields:
         base_url = fields["base_url"] or None

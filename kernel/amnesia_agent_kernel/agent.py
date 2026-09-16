@@ -62,6 +62,7 @@ async def agent_turn(
     workspace: Workspace,
     user_input: str,
     response_format: Mapping[str, Any] | None = None,
+    system_prompt_prefix: str = "",
 ) -> AsyncGenerator[str | AllMessageValues, None]:
     """Run one user turn until the model stops calling tools.
 
@@ -90,6 +91,8 @@ async def agent_turn(
     """
     if not isinstance(user_input, str):
         raise ConfigError("user_input must be text")
+    if not isinstance(system_prompt_prefix, str):
+        raise ConfigError("system_prompt_prefix must be text")
     response_format = snapshot_response_format(response_format)
     workspace.append_history({"role": "user", "content": user_input})
     turn_messages: list[AllMessageValues] = []
@@ -105,6 +108,7 @@ async def agent_turn(
                 turn_messages,
                 policy.max_context_message_chars,
                 workspace,
+                system_prompt_prefix=system_prompt_prefix,
             )
             try:
                 turn_kwargs: dict[str, Any] = {

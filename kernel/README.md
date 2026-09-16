@@ -44,13 +44,18 @@ the model or provider is not trusted.
 
 ## Turns and streaming
 
-`KernelSession.turn(text, response_format=None)` returns an async iterator of
+`KernelSession.turn(text, response_format=None, system_prompt_prefix=None)` returns an async iterator of
 `str | AllMessageValues`:
 
 - `str` — a streamed assistant text delta.
 - `AllMessageValues` — a complete assistant message (`role="assistant"`, may
   include `tool_calls`) or a tool-result message (`role="tool"`). Distinguish by
   `role`.
+
+`system_prompt_prefix` is a frontend-owned string (empty by default) that is
+prepended to the workspace `system_prompt.md` and `memory.md` for every provider
+request in the turn. It is not persisted, exposed to the shell tool, or written to
+workspace history. The workspace prompt remains kernel-owned and model-editable.
 
 `response_format` is an optional JSON object passed to LiteLLM for providers that
 support structured outputs. For example:

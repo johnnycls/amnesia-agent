@@ -26,7 +26,7 @@ screen config_page():
 
         text "API key" style "app_small"
         if app.settings_api_key_set:
-            text "API key is set (leave blank when saving to keep it)" style "app_small"
+            text "API key is set (leave blank when saving to clear it)" style "app_small"
         else:
             text "API key is not set — enter a key to continue" style "app_small"
         input value VariableInputValue("settings_api_key") xfill True length 200 mask "*"

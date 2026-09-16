@@ -47,6 +47,27 @@ class MessageTests(unittest.TestCase):
             messages = build_messages("prompt", "hi", [], 100, workspace)
         self.assertEqual(messages[0], {"role": "system", "content": "prompt\n\nmemo"})
 
+    def test_system_prompt_prefix_is_first_and_not_workspace_content(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Workspace(directory)
+            workspace.update_system_prompt("kernel-owned")
+            workspace.update_memory("memo")
+            messages = build_messages(
+                "kernel-owned",
+                "hi",
+                [],
+                100,
+                workspace,
+                system_prompt_prefix="frontend-owned",
+            )
+        self.assertEqual(
+            messages[0],
+            {
+                "role": "system",
+                "content": "frontend-owned\n\nkernel-owned\n\nmemo",
+            },
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

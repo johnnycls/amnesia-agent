@@ -28,7 +28,14 @@ class FakeClient:
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
 
-    def stream_turn(self, text: str, on_event: Any, on_error: Any, on_complete: Any) -> FakeTurnHandle:
+    def stream_turn(
+        self,
+        text: str,
+        on_event: Any,
+        on_error: Any,
+        on_complete: Any,
+        **kwargs: Any,
+    ) -> FakeTurnHandle:
         handle = FakeTurnHandle()
         self.calls.append(
             {
@@ -37,6 +44,7 @@ class FakeClient:
                 "on_error": on_error,
                 "on_complete": on_complete,
                 "handle": handle,
+                **kwargs,
             }
         )
         return handle
@@ -51,6 +59,7 @@ class TurnLifecycleTests(unittest.TestCase):
         app.provider_configured = True
         app.character = SimpleNamespace(
             id="aurora",
+            prompt="frontend character prompt",
             backgrounds={"room": MediaAsset("room.jpg", "image")},
             expressions={
                 "neutral": MediaAsset("neutral.jpg", "image"),

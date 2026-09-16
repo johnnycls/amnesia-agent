@@ -92,7 +92,13 @@ class AgentTurnTests(unittest.IsolatedAsyncioTestCase):
             ):
                 events = [
                     event
-                    async for event in agent_turn(make_config(), ExecutionPolicy(), workspace, "hi")
+                    async for event in agent_turn(
+                        make_config(),
+                        ExecutionPolicy(),
+                        workspace,
+                        "hi",
+                        system_prompt_prefix="frontend prompt",
+                    )
                 ]
             history_files = sorted(Path(directory, "history").glob("*.jsonl"))
             self.assertEqual(len(history_files), 1)
@@ -116,10 +122,15 @@ class AgentTurnTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(calls), 2)
         first_messages = calls[0]["messages"]
-        self.assertEqual(first_messages[0], {"role": "user", "content": "hi"})
+        self.assertEqual(
+            first_messages[0], {"role": "system", "content": "frontend prompt"}
+        )
         second_messages = calls[1]["messages"]
-        self.assertEqual(len(second_messages), 3)
-        self.assertEqual(second_messages[2], tool_message)
+        self.assertEqual(len(second_messages), 4)
+        self.assertEqual(
+            second_messages[0], {"role": "system", "content": "frontend prompt"}
+        )
+        self.assertEqual(second_messages[3], tool_message)
         self.assertEqual(history_roles, ["user", "assistant", "tool", "assistant"])
 
     async def test_structured_response_format_is_forwarded_on_each_model_request(self) -> None:
@@ -153,11 +164,16 @@ class AgentTurnTests(unittest.IsolatedAsyncioTestCase):
                         workspace,
                         "hi",
                         response_format,
+                        system_prompt_prefix="frontend prompt",
                     )
                 ]
 
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0]["response_format"], response_format)
+        self.assertEqual(
+            calls[0]["messages"][0]["content"],
+            "frontend prompt",
+        )
         self.assertEqual(events[0], '{"answer":"ok"}')
         self.assertIsInstance(events[-1], dict)
         self.assertEqual(events[-1]["role"], "assistant")

@@ -123,6 +123,7 @@ class Client:
         on_error: Callable[[Exception], None],
         on_complete: Callable[[], None],
         response_format: dict[str, Any] | None = None,
+        system_prompt_prefix: str = "",
     ) -> TurnHandle:
         """POST /v1/turn omitting workspace_path (server default ~/.amnesia-agent)."""
         handle = TurnHandle()
@@ -132,6 +133,7 @@ class Client:
                 ASSISTANT_STAGE if response_format is None else response_format
             ),
         }
+        payload["system_prompt_prefix"] = system_prompt_prefix
 
         def run() -> None:
             # Always invoke on_complete unless on_error already handled the turn

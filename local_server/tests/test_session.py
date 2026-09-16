@@ -42,9 +42,15 @@ class FakeSession:
         self.workspace_root = workspace_root
         type(self).created.append(self)
 
-    async def turn(self, text: str, response_format: object = None):
+    async def turn(
+        self,
+        text: str,
+        response_format: object = None,
+        system_prompt_prefix: str = "",
+    ):
         self.turn_text = text
         self.turn_response_format = response_format
+        self.turn_system_prompt_prefix = system_prompt_prefix
         yield '{"answer":"'
         yield {
             "role": "assistant",
@@ -86,7 +92,12 @@ class ClosingFakeSession(FakeSession):
         super().__init__(provider, policy, workspace_root)
         self.closed = False
 
-    async def turn(self, text: str, response_format: object = None):
+    async def turn(
+        self,
+        text: str,
+        response_format: object = None,
+        system_prompt_prefix: str = "",
+    ):
         try:
             yield "partial"
             await asyncio.sleep(60)
@@ -112,9 +123,15 @@ class HoldingFakeSession(FakeSession):
         if key not in type(self).gates:
             type(self).gates[key] = asyncio.Event()
 
-    async def turn(self, text: str, response_format: object = None):
+    async def turn(
+        self,
+        text: str,
+        response_format: object = None,
+        system_prompt_prefix: str = "",
+    ):
         self.turn_text = text
         self.turn_response_format = response_format
+        self.turn_system_prompt_prefix = system_prompt_prefix
         yield "held"
         await type(self).gates[self._gate_key].wait()
         yield {"role": "assistant", "content": f"done:{text}"}
@@ -429,6 +446,23 @@ class SessionTests(unittest.TestCase):
 
         asyncio.run(run())
 
+    def test_start_turn_passes_system_prompt_prefix_through(self) -> None:
+        prefix = "frontend character prompt"
+
+        async def run() -> None:
+            with tempfile.TemporaryDirectory() as directory:
+                store = ConfigStore(directory)
+                _write_config(store)
+                manager = SessionManager(store)
+                with patch("amnesia_agent_local_server.session.KernelSession", FakeSession):
+                    events_agen = manager.start_turn("hello", system_prompt_prefix=prefix)
+                    async with aclosing(events_agen):
+                        async for _event in events_agen:
+                            pass
+                self.assertEqual(FakeSession.created[0].turn_system_prompt_prefix, prefix)
+
+        asyncio.run(run())
+
     def test_start_turn_passes_response_format_through(self) -> None:
         fmt = {"type": "json_object"}
 
@@ -489,9 +523,20 @@ class SessionTests(unittest.TestCase):
             _write_config(store)
             client = TestClient(create_app(store))
             with patch("amnesia_agent_local_server.session.KernelSession", FakeSession):
-                response = client.post("/v1/turn", json={"text": "hi", "response_format": fmt})
+                response = client.post(
+                    "/v1/turn",
+                    json={
+                        "text": "hi",
+                        "response_format": fmt,
+                        "system_prompt_prefix": "frontend prompt",
+                    },
+                )
             self.assertEqual(response.status_code, 200)
             self.assertEqual(FakeSession.created[0].turn_response_format, fmt)
+            self.assertEqual(
+                FakeSession.created[0].turn_system_prompt_prefix,
+                "frontend prompt",
+            )
 
     def test_turn_http_rejects_wrong_response_format_type(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

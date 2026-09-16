@@ -36,7 +36,7 @@ Set `AMNESIA_AGENT_PYTHON` if the game must spawn a specific Python for
 3. Click Launch / Run. The game spawns the local server, health-checks
    `instance_id`, loads `/v1/config` and `~/.amnesia-agent-assistant/config.json`,
    then:
-   - **Both ready** → apply character (setup-or-repair, PUT prompt, assets) → **Main**
+   - **Both ready** → apply character (setup-or-repair; prompt injected per turn) → **Main**
    - Missing model/API key → **Config** (cannot proceed without save success)
    - Missing/invalid character → **Character Select**
    - Corrupt Assistant preferences → offer **Reset Assistant preferences**, then reload setup
@@ -65,9 +65,9 @@ Each pack lives under `game/characters/<id>/`:
 | File | Role |
 |---|---|
 | `character.json` | id, display name, default background ID |
-| `prompt.md` | system prompt written on select via `PUT /v1/workspace/system-prompt` |
-| `bg/` | discovered PNG/JPEG/WebP/MP4/WebM background assets; filename stems are IDs |
-| `expressions/` | discovered PNG/JPEG/WebP/MP4/WebM expression assets; filename stems are IDs |
+| `prompt.md` | frontend-owned prompt injected per turn; never written to the kernel workspace |
+| `bg/` | discovered PNG/WebP background assets; filename stems are IDs |
+| `expressions/` | discovered transparent PNG/WebP expression assets; filename stems are IDs |
 
 Every pack must provide at least one background plus transparent `neutral` and `busy` expressions. PNG/WebP signatures and expression alpha channels are validated before Main; video assets are not supported in v1.
 
@@ -93,7 +93,7 @@ expressions and backgrounds are generated illustrations matching this direction 
   character is still valid → apply + **Main**; else **Character Select**. Cannot leave
   Config until model + API key are set.
 - **Reset** (Main / Character Select): Confirm → `POST /v1/workspace/create-or-reset`
-  on the default workspace (hard wipe), re-PUT the current character `prompt.md`,
+  on the default workspace (hard wipe), preserve the frontend prompt for per-turn injection,
   clear message/choices, restore the default background and `neutral` expression. Does **not** clear
   Assistant `selected_character_id`.
 - Cancel closes the SSE connection; busy clears on complete (same contract as renpy).

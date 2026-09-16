@@ -30,10 +30,13 @@ def build_messages(
     turn_messages: list[AllMessageValues],
     max_context_message_chars: int,
     workspace: Workspace,
+    system_prompt_prefix: str = "",
 ) -> list[AllMessageValues]:
     """Assemble system, user, and same-turn messages."""
     if not isinstance(system_prompt, str) or not isinstance(user_input, str):
         raise ProviderError("Prompt and user input must be text")
+    if not isinstance(system_prompt_prefix, str):
+        raise ProviderError("System prompt prefix must be text")
     if not isinstance(turn_messages, list) or not all(
         isinstance(message, dict) for message in turn_messages
     ):
@@ -48,7 +51,7 @@ def build_messages(
     if not isinstance(memory, str):
         raise ProviderError("Memory content must be text")
     messages: list[AllMessageValues] = []
-    system_parts = [part for part in (system_prompt, memory) if part]
+    system_parts = [part for part in (system_prompt_prefix, system_prompt, memory) if part]
     if system_parts:
         messages.append({"role": "system", "content": "\n\n".join(system_parts)})
     messages.append({"role": "user", "content": user_input})

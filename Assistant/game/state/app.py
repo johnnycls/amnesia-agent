@@ -325,13 +325,8 @@ class AppState:
 
         def work() -> None:
             try:
-                # Default workspace: omit workspace_path so server uses ~/.amnesia-agent.
+                # Setup only creates missing kernel files; character.prompt is injected per turn.
                 self.client.request_json("POST", "/v1/workspace/setup-or-repair")
-                self.client.request_json(
-                    "PUT",
-                    "/v1/workspace/system-prompt",
-                    {"content": pack.prompt},
-                )
                 invoke(self._character_ready, pack, status_when_ready, operation_id)
             except Exception as error:  # noqa: BLE001
                 invoke(self._character_failed, error, operation_id)
@@ -426,13 +421,8 @@ class AppState:
 
         def work() -> None:
             try:
-                # Default workspace: omit workspace_path.
+                # Reset only kernel-owned workspace state; character.prompt is injected per turn.
                 self.client.request_json("POST", "/v1/workspace/create-or-reset")
-                self.client.request_json(
-                    "PUT",
-                    "/v1/workspace/system-prompt",
-                    {"content": pack.prompt},
-                )
                 invoke(self._reset_ok, pack, operation_id)
             except Exception as error:  # noqa: BLE001
                 invoke(self._reset_failed, error, operation_id)
@@ -485,6 +475,7 @@ class AppState:
             lambda event, turn_id=turn_id: self._on_event(turn_id, event),
             lambda error, turn_id=turn_id: self._on_error(turn_id, error),
             lambda turn_id=turn_id: self._on_complete(turn_id),
+            system_prompt_prefix=self.character.prompt,
         )
 
     def choose(self, choice: str) -> None:
@@ -741,8 +732,7 @@ class AppState:
                 "base_url": base_url,
                 "provider_params": provider_params,
             }
-            if api_key.strip():
-                payload["api_key"] = api_key.strip()
+            payload["api_key"] = api_key.strip()
         except (ValueError, TypeError, json.JSONDecodeError) as error:
             self.status = f"Invalid settings: {error}"
             self._refresh()

@@ -78,6 +78,24 @@ class StartupRecoveryTests(unittest.TestCase):
             self.assertFalse(app.recovery_busy)
             self.assertFalse(app.ready)
 
+    def test_character_apply_does_not_write_kernel_system_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            app = self._app(AssistantConfigStore(directory))
+            requests: list[tuple[str, str]] = []
+
+            def request_json(method: str, path: str, **_kwargs: object) -> dict[str, object]:
+                requests.append((method, path))
+                return {}
+
+            app.client = SimpleNamespace(request_json=request_json)
+            app._character_ready = Mock()  # type: ignore[method-assign]
+            pack = SimpleNamespace(prompt="frontend prompt")
+
+            with patch("state.app.threading.Thread", ImmediateThread):
+                app._begin_apply_character(pack, status_when_ready="Ready")
+
+            self.assertEqual(requests, [("POST", "/v1/workspace/setup-or-repair")])
+
     def test_stale_loading_callback_is_ignored(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             app = self._app(AssistantConfigStore(directory))

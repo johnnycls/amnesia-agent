@@ -109,10 +109,8 @@ can detect stale servers on a contested port.
 ```text
 GET  /v1/config           → public config (api_key masked; provider_params redacted)
 PUT  /v1/config           → partial update (any subset of keys; credential
-                            provider_params → 400). Blank/omitted `api_key`
-                            leaves the stored key unchanged; `api_key_clear: true`
-                            clears it explicitly (do not combine with a non-blank
-                            `api_key`).
+                            provider_params → 400). Omitted `api_key` leaves the
+                            stored key unchanged; blank `api_key` clears it.
 POST /v1/config/reset     → rewrite defaults from constants
 ```
 
@@ -124,12 +122,14 @@ optional `workspace_path`.
 ### Turn (SSE)
 
 ```text
-POST /v1/turn   {"text":"...","response_format":{...}|null,"workspace_path":"..."|null}
+POST /v1/turn   {"text":"...","response_format":{...}|null,"workspace_path":"..."|null,"system_prompt_prefix":"..."|null}
 ```
 
 Body: required `text` (non-empty string); optional `response_format` (JSON object
 or `null` / omitted); optional `workspace_path` (string or `null` / omitted /
-empty → kernel default `~/.amnesia-agent`). Wrong types fail loud with **422**.
+empty → kernel default `~/.amnesia-agent`); optional `system_prompt_prefix` (string
+or `null` / omitted), which is passed to the kernel for this turn only and never
+written to workspace files. Wrong types fail loud with **422**.
 When `response_format` is omitted or `null`, the server passes `None` to
 `KernelSession.turn` (no structured output). When provided, the object is
 forwarded unchanged to the kernel.

@@ -79,6 +79,7 @@ class KernelSession:
         self,
         user_input: str,
         response_format: Mapping[str, Any] | None = None,
+        system_prompt_prefix: str = "",
     ) -> AsyncGenerator[str | AllMessageValues, None]:
         """Stream one turn, optionally requesting structured output.
 
@@ -104,6 +105,7 @@ class KernelSession:
                 self._workspace,
                 user_input,
                 response_format,
+                system_prompt_prefix=system_prompt_prefix,
             )
             async with aclosing(events):
                 async for event in events:
