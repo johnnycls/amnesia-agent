@@ -8,7 +8,7 @@ import threading
 from collections.abc import Callable
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
 from api.schema import ASSISTANT_STAGE
@@ -19,8 +19,7 @@ try:
 except ImportError:
     renpy = None  # type: ignore[assignment]
 
-DEFAULT_HOST = "127.0.0.1"
-DEFAULT_PORT = 8765
+DEFAULT_SERVER_URL = "http://127.0.0.1:8765"
 TURN_CONNECT_TIMEOUT_SECONDS = 10.0
 TURN_IDLE_TIMEOUT_SECONDS = 120.0
 _TURN_EVENT_TYPES = frozenset({"delta", "assistant", "tool_result", "error", "done"})
@@ -29,7 +28,11 @@ _LOCAL_CLIENT_MARKER = "local"
 
 
 class ApiError(RuntimeError):
-    """Raised when the local server cannot be reached or returns an error."""
+    """Raised when the configured server cannot be reached or returns an error."""
+
+
+class ServerUrlError(ValueError):
+    """Raised when a server URL is not a valid HTTP(S) origin."""
 
 
 class TurnTimeoutError(ApiError):
@@ -70,16 +73,58 @@ def invoke(callback: Callable[..., None], *args: Any) -> None:
         callback(*args)
 
 
+def normalize_server_url(value: str) -> str:
+    """Return a canonical HTTP(S) origin with an optional explicit port.
+
+    The frontend deliberately accepts remote origins because the user selects
+    and trusts the endpoint. Credentials, paths, queries, and fragments are
+    rejected so API paths are always joined consistently by this client.
+    HTTPS uses urllib's normal certificate and hostname verification.
+    """
+    if not isinstance(value, str):
+        raise ServerUrlError("Server URL must be a string")
+    candidate = value.strip()
+    if not candidate:
+        raise ServerUrlError("Server URL cannot be empty")
+    try:
+        parsed = urlsplit(candidate)
+        port = parsed.port
+    except ValueError as error:
+        raise ServerUrlError(f"Invalid server URL: {error}") from error
+    if parsed.scheme not in ("http", "https"):
+        raise ServerUrlError("Server URL scheme must be http or https")
+    if (
+        parsed.username is not None
+        or parsed.password is not None
+        or not parsed.hostname
+        or parsed.path not in ("", "/")
+        or parsed.query
+        or parsed.fragment
+        or (port is None and parsed.netloc.endswith(":"))
+    ):
+        raise ServerUrlError(
+            "Server URL must be an http(s) origin without credentials or a path"
+        )
+    hostname = parsed.hostname.lower()
+    host = f"[{hostname}]" if ":" in hostname else hostname
+    netloc = host if port is None else f"{host}:{port}"
+    return urlunsplit((parsed.scheme.lower(), netloc, "", "", ""))
+
+
 class Client:
     """Synchronous JSON requests and background SSE turns against /v1."""
 
-    def __init__(self, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT) -> None:
-        self.host = host
-        self.port = port
+    def __init__(self, base_url: str = DEFAULT_SERVER_URL) -> None:
+        self._base_url = normalize_server_url(base_url)
 
     @property
     def base_url(self) -> str:
-        return f"http://{self.host}:{self.port}"
+        return self._base_url
+
+    def set_base_url(self, base_url: str) -> str:
+        """Validate and apply a new server origin, returning its canonical form."""
+        self._base_url = normalize_server_url(base_url)
+        return self._base_url
 
     def request_json(
         self,

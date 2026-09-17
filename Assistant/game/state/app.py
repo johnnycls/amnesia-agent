@@ -6,7 +6,16 @@ import json
 import threading
 from typing import Any
 
-from api.client import ApiError, Client, TurnHandle, TurnTimeoutError, invoke
+from api.client import (
+    DEFAULT_SERVER_URL,
+    ApiError,
+    Client,
+    ServerUrlError,
+    TurnHandle,
+    TurnTimeoutError,
+    invoke,
+    normalize_server_url,
+)
 from audio.player import music
 from characters.loader import (
     CharacterError,
@@ -24,8 +33,6 @@ from home_config.store import (
     ConfigError,
     build_config_store,
 )
-from process.lifecycle import ServerProcess
-
 from state.config_gate import (
     format_config_required_status,
     is_boot_ready,
@@ -55,7 +62,7 @@ class AppState:
 
     def __init__(self) -> None:
         self.client = Client()
-        self.server = ServerProcess(self.client)
+        self.server_url = DEFAULT_SERVER_URL
         self.config_store = build_config_store()
         self.mod_store = ModStore()
         self.assistant_config: AssistantConfig | None = None
@@ -139,19 +146,22 @@ class AppState:
         operation_id = self._begin_operation("starting")
         self.starting = True
         self.page = "loading"
-        self.status = "Starting local server..."
+        self.status = "Connecting to local server..."
         self.error = ""
         self.loading_recovery = ""
         self._refresh()
         try:
             assistant_config = self.config_store.load()
         except ConfigError as error:
-            self._loading_failed(error, "assistant_config", operation_id)
+            recovery = "server_connection" if "server URL" in str(error) else "assistant_config"
+            self._loading_failed(error, recovery, operation_id)
             return
+        self.server_url = assistant_config.server_url
+        self.client.set_base_url(self.server_url)
+        self._set_store("server_url_input", self.server_url)
 
         def work() -> None:
             try:
-                self.server.start()
                 health = self.client.health(timeout=2.0)
                 if health.get("status") != "ok":
                     raise ApiError(f"Unexpected health response: {health!r}")
@@ -200,7 +210,8 @@ class AppState:
                     operation_id,
                 )
             except (ApiError, CharacterError, ConfigError, OSError) as error:
-                invoke(self._loading_failed, error, "", operation_id)
+                recovery = "server_connection" if isinstance(error, ApiError) else ""
+                invoke(self._loading_failed, error, recovery, operation_id)
             except Exception as error:  # noqa: BLE001
                 invoke(self._loading_failed, error, "", operation_id)
 
@@ -242,8 +253,69 @@ class AppState:
         self._end_operation(operation_id)
         self.ready = False
         self.loading_recovery = recovery
-        self.status = f"Server startup failed: {error}"
+        self.status = (
+            f"Server connection failed: {error}"
+            if recovery == "server_connection"
+            else f"Startup failed: {error}"
+        )
         self.error = str(error)
+        self._refresh()
+
+    def connect_server(self, server_url: str) -> None:
+        """Health-check and persist a user-supplied server origin."""
+        if self.starting or self.operation is not None or self.ready:
+            return
+        try:
+            canonical = normalize_server_url(server_url)
+        except ServerUrlError as error:
+            self.status = f"Invalid server URL: {error}"
+            self.error = str(error)
+            self._refresh()
+            return
+        operation_id = self._begin_operation("connecting_server")
+        self.status = f"Connecting to {canonical}..."
+        self.error = ""
+        self.client.set_base_url(canonical)
+        self._refresh()
+
+        def work() -> None:
+            try:
+                health = self.client.health(timeout=2.0)
+                if health.get("status") != "ok":
+                    raise ApiError(f"Unexpected health response: {health!r}")
+                invoke(self._server_connection_ok, canonical, operation_id)
+            except Exception as error:  # noqa: BLE001
+                invoke(self._server_connection_failed, error, operation_id)
+
+        threading.Thread(target=work, name="assistant-server-connect", daemon=True).start()
+
+    def _server_connection_ok(self, server_url: str, operation_id: int) -> None:
+        if not self._operation_is_current(operation_id):
+            return
+        try:
+            self.config_store.set_server_url(server_url)
+        except Exception as error:  # noqa: BLE001
+            self._server_connection_failed(error, operation_id)
+            return
+        self.server_url = server_url
+        self._set_store("server_url_input", server_url)
+        self._end_operation(operation_id)
+        self.status = "Server connected. Loading..."
+        self.start_loading()
+
+    def _server_connection_failed(self, error: Exception, operation_id: int) -> None:
+        if not self._operation_is_current(operation_id):
+            return
+        self._end_operation(operation_id)
+        self.loading_recovery = "server_connection"
+        self.status = f"Server connection failed: {error}"
+        self.error = str(error)
+        self._refresh()
+
+    def reset_server_url(self) -> None:
+        self._set_store("server_url_input", DEFAULT_SERVER_URL)
+        self.status = "Default server URL restored."
+        self.error = ""
         self._refresh()
 
     def reset_server_config(self) -> None:
@@ -943,7 +1015,6 @@ class AppState:
             self._refresh()
             return
         self.music.stop()
-        self.server.stop()
         self.ready = False
         if renpy is not None:
             renpy.quit()
@@ -952,7 +1023,6 @@ class AppState:
         if self.turn_handle is not None:
             self.turn_handle.cancel()
         self.music.stop()
-        self.server.stop()
 
     # --- helpers -------------------------------------------------------------
 

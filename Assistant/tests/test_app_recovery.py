@@ -31,7 +31,6 @@ class StartupRecoveryTests(unittest.TestCase):
     def _app(self, store: AssistantConfigStore) -> AppState:
         app = AppState()
         app.config_store = store
-        app.server = SimpleNamespace(start=Mock())
         return app
 
     def test_corrupt_assistant_config_selects_assistant_recovery(self) -> None:
@@ -52,6 +51,25 @@ class StartupRecoveryTests(unittest.TestCase):
             self.assertFalse(app.recovery_busy)
             self.assertFalse(app.ready)
 
+    def test_startup_never_owns_server_process(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            app = self._app(AssistantConfigStore(directory))
+            app.client = SimpleNamespace(
+                set_base_url=Mock(),
+                health=lambda timeout: {"status": "ok"},
+                request_json=lambda method, path, **kwargs: {},
+            )
+            app._loading_ok = Mock()  # type: ignore[method-assign]
+
+            with (
+                patch("state.app.load_all_characters", return_value=[object()]),
+                patch("state.app.threading.Thread", ImmediateThread),
+            ):
+                app.start_loading()
+
+            self.assertFalse(hasattr(app, "server"))
+            app.client.set_base_url.assert_called_once()  # type: ignore[attr-defined]
+
     def test_corrupt_server_config_selects_server_recovery(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = AssistantConfigStore(directory)
@@ -66,6 +84,7 @@ class StartupRecoveryTests(unittest.TestCase):
             app.client = SimpleNamespace(
                 health=lambda timeout: {"status": "ok"},
                 request_json=request_json,
+                set_base_url=Mock(),
             )
 
             with (
@@ -109,6 +128,22 @@ class StartupRecoveryTests(unittest.TestCase):
             self.assertEqual(app.operation_id, second)
             self.assertEqual(app.operation, "saving_config")
             self.assertEqual(app.status, "Saving settings...")
+
+    def test_custom_server_url_is_persisted_after_health(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = AssistantConfigStore(directory)
+            app = self._app(store)
+            app.start_loading = Mock()  # type: ignore[method-assign]
+            app.client = SimpleNamespace(
+                set_base_url=Mock(),
+                health=lambda timeout: {"status": "ok"},
+            )
+
+            with patch("state.app.threading.Thread", ImmediateThread):
+                app.connect_server("https://agent.example:9443/")
+
+            self.assertEqual(store.load().server_url, "https://agent.example:9443")
+            app.start_loading.assert_called_once_with()  # type: ignore[attr-defined]
 
     def test_server_config_reset_reloads_startup(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

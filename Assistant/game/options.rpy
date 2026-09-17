@@ -11,6 +11,6 @@ init python:
     # directories at runtime, while community mods live outside the install.
     build.classify("game/characters/**", "all")
 
-    # Optional CI-built native sidecar (same layout as renpy/).
+    # Native sidecar consumed by the exported-pack launcher.
     build.classify("game/server/**", "all")
     build.executable("game/server/**")

@@ -12,6 +12,7 @@ GAME = Path(__file__).parents[1] / "game"
 sys.path.insert(0, str(GAME))
 
 import home_config.store as store  # noqa: E402
+from api.client import DEFAULT_SERVER_URL  # noqa: E402
 from home_config.store import (  # noqa: E402
     AssistantConfig,
     PersistentAssistantConfigStore,
@@ -30,12 +31,15 @@ class PersistentStoreTests(unittest.TestCase):
             preferences.save(AssistantConfig("creator.character", "japanese"))
             self.assertEqual(preferences.load().selected_character_id, "creator.character")
             self.assertEqual(preferences.load().language, "japanese")
+            self.assertEqual(preferences.load().server_url, DEFAULT_SERVER_URL)
+            self.assertEqual(persistent.server_url, DEFAULT_SERVER_URL)
             fake_renpy.save_persistent.assert_called_once_with()
 
     def test_reset_only_clears_assistant_fields(self) -> None:
         persistent = SimpleNamespace(
             selected_character_id="creator.character",
             assistant_language="japanese",
+            server_url="https://agent.example:9443",
             unrelated_preference=True,
         )
         fake_renpy = SimpleNamespace(
@@ -46,6 +50,7 @@ class PersistentStoreTests(unittest.TestCase):
             PersistentAssistantConfigStore().reset()
             self.assertEqual(persistent.selected_character_id, "")
             self.assertEqual(persistent.assistant_language, "english")
+            self.assertEqual(persistent.server_url, DEFAULT_SERVER_URL)
             self.assertTrue(persistent.unrelated_preference)
 
 

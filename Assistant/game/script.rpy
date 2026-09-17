@@ -6,6 +6,7 @@ default settings_api_key = ""
 default settings_base_url = ""
 default settings_provider_params = "{}"
 default settings_language = "english"
+default server_url_input = "http://127.0.0.1:8765"
 
 init python:
     from state.app import AppState

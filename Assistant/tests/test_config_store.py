@@ -12,7 +12,8 @@ from pathlib import Path
 GAME = Path(__file__).parents[1] / "game"
 sys.path.insert(0, str(GAME))
 
-from home_config.store import (
+from api.client import DEFAULT_SERVER_URL  # noqa: E402
+from home_config.store import (  # noqa: E402
     DEFAULT_LANGUAGE,
     AssistantConfigStore,
     ConfigError,
@@ -113,8 +114,11 @@ class AssistantConfigStoreTests(unittest.TestCase):
 
     def test_default_keys_include_language(self) -> None:
         raw = default_config_dict()
-        self.assertEqual(set(raw), {"selected_character_id", "language"})
+        self.assertEqual(
+            set(raw), {"selected_character_id", "language", "server_url"}
+        )
         self.assertEqual(raw["language"], "english")
+        self.assertEqual(raw["server_url"], DEFAULT_SERVER_URL)
 
     @unittest.skipIf(
         os.name == "nt",

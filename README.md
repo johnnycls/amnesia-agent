@@ -36,9 +36,11 @@ amnesia-agent-local-server
 ```
 
 Open the Ren'Py project in [`Assistant/`](Assistant/) with the Ren'Py launcher.
-The app starts the local server and streams agent events over HTTP. Configure
-model and API key in the in-app Config screen (also persisted under
-`~/.amnesia-agent-local-server/` / `~/.amnesia-agent-assistant/`).
+The frontend connects to an already-running local server and streams agent events
+over HTTP. For an exported pack, the native launcher starts the bundled server
+before Ren'Py and shuts it down after Ren'Py exits. Configure model, API key, and
+server origin in the app (persisted under `~/.amnesia-agent-local-server/` /
+`~/.amnesia-agent-assistant/`).
 
 ## Packages
 
@@ -61,6 +63,7 @@ amnesia-agent/
 │   └── amnesia_agent_local_server/
 ├── Assistant/               # Ren'Py character-stage frontend
 │   └── game/
+├── cmd/assistant-launcher/   # Cross-platform exported-pack supervisor
 └── .github/workflows/ci.yml
 ```
 

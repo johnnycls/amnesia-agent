@@ -4,7 +4,14 @@ screen loading_page():
         text "Loading" size 28 bold True
         text app.status style "app_small"
         if app.error:
-            if app.loading_recovery == "server_config":
+            if app.loading_recovery == "server_connection":
+                text "The configured server could not be reached. Enter a trusted HTTP(S) origin; a port is optional for standard HTTP/HTTPS." style "app_small"
+                input value VariableInputValue("server_url_input") xfill True length 400
+                hbox:
+                    spacing 12
+                    textbutton "Connect" action Function(app.connect_server, server_url_input)
+                    textbutton "Reset default" action Function(app.reset_server_url)
+            elif app.loading_recovery == "server_config":
                 text "The local server settings are corrupt. Resetting them removes the stored API key and provider settings." style "app_small"
                 textbutton "Reset server settings" action Function(app.reset_server_config)
             elif app.loading_recovery == "assistant_config":

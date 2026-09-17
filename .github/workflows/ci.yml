@@ -30,6 +30,7 @@ jobs:
               - 'local_server/**'
             assistant:
               - 'Assistant/**'
+              - 'cmd/assistant-launcher/**'
             workflows:
               - '.github/workflows/**'
       - id: select
@@ -198,6 +199,83 @@ jobs:
           path: dist/local-server
           if-no-files-found: error
 
+  local-server-native-build:
+    needs: changes
+    if: needs.changes.outputs.local_server == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            suffix: linux-amd64
+          - os: windows-latest
+            suffix: windows-amd64
+          - os: macos-13
+            suffix: macos-amd64
+          - os: macos-14
+            suffix: macos-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: python -m pip install ./kernel ./local_server pyinstaller
+      - shell: bash
+        run: >-
+          python -m PyInstaller --onefile --name amnesia-agent-local-server
+          --paths kernel --paths local_server
+          --collect-submodules fastapi --collect-submodules uvicorn
+          --collect-submodules amnesia_agent_kernel
+          local_server/amnesia_agent_local_server/__main__.py
+      - uses: actions/upload-artifact@v7
+        with:
+          name: local-server-native-${{ matrix.suffix }}
+          path: dist/amnesia-agent-local-server*
+          if-no-files-found: error
+
+  assistant-launcher-build:
+    needs: changes
+    if: needs.changes.outputs.assistant == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: windows
+            goarch: amd64
+            suffix: windows-amd64
+            binary: assistant-launcher.exe
+          - goos: darwin
+            goarch: amd64
+            suffix: macos-amd64
+            binary: assistant-launcher
+          - goos: darwin
+            goarch: arm64
+            suffix: macos-arm64
+            binary: assistant-launcher
+          - goos: linux
+            goarch: amd64
+            suffix: linux-amd64
+            binary: assistant-launcher
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - working-directory: cmd/assistant-launcher
+        run: go test ./...
+      - working-directory: cmd/assistant-launcher
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: go build -trimpath -o "../../assistant-launcher-${{ matrix.suffix }}/${{ matrix.binary }}" .
+      - uses: actions/upload-artifact@v7
+        with:
+          name: assistant-launcher-${{ matrix.suffix }}
+          path: assistant-launcher-${{ matrix.suffix }}
+          if-no-files-found: error
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     needs:
@@ -209,6 +287,8 @@ jobs:
       - assistant-test
       - kernel-build
       - local-server-build
+      - local-server-native-build
+      - assistant-launcher-build
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -223,6 +303,18 @@ jobs:
         with:
           name: python-local-server-dist
           path: release-assets/local-server
+      - name: Download native local-server artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: local-server-native-*
+          path: release-assets/native-local-server
+          merge-multiple: false
+      - name: Download launcher artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: assistant-launcher-*
+          path: release-assets/launchers
+          merge-multiple: false
       - name: Package release assets
         shell: bash
         run: |
@@ -230,6 +322,8 @@ jobs:
           cd "$GITHUB_WORKSPACE/release-assets"
           zip -qr python-kernel-dist.zip kernel
           zip -qr python-local-server-dist.zip local-server
+          zip -qr assistant-launchers.zip launchers
+          zip -qr native-local-servers.zip native-local-server
           ls -l
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
@@ -242,3 +336,5 @@ jobs:
           files: |
             release-assets/python-kernel-dist.zip
             release-assets/python-local-server-dist.zip
+            release-assets/assistant-launchers.zip
+            release-assets/native-local-servers.zip

@@ -5,8 +5,9 @@ Ren'Py launcher.
 
 **Locked boot** (like renpy recent-workspace auto-enter): once provider creds and a
 character choice are complete, later launches skip setup and open **Main** directly.
-Persists `persistent.selected_character_id` and `persistent.assistant_language` in
-Ren'Py persistent storage (default language `english`). Always uses the default
+Persists `persistent.selected_character_id`, `persistent.assistant_language`, and
+`persistent.server_url` in Ren'Py persistent storage (default language `english`,
+default server URL `http://127.0.0.1:8765`). Always uses the default
 workspace (`~/.amnesia-agent`, by omitting `workspace_path`). Slim **Config** page for
 `model`, `api_key`, `base_url`, `provider_params` via
 `GET`/`PUT /v1/config`, plus UI language. No workspace picker in v1.
@@ -27,15 +28,27 @@ On first run the game gates until **both** are ready:
    bundled pack. Prefer **Character Select** when provider is ok but character is
    missing/invalid.
 
-Set `AMNESIA_AGENT_PYTHON` if the game must spawn a specific Python for
-`python -m amnesia_agent_local_server`.
+The Ren'Py frontend is client-only. It reads a persisted server origin (default
+`http://127.0.0.1:8765`) and never starts or stops a server. If health fails, the
+Loading screen accepts a trusted `http(s)://host[:port]` origin and persists it only
+after a successful health check. HTTPS uses normal certificate verification.
+Custom remote endpoints are trusted by operator policy; this protocol currently
+adds no bearer authentication, so only use endpoints you control and trust (the
+server exposes powerful agent tools).
+
+For exported packs, use the native `assistant-launcher` beside the fixed-layout
+server and Ren'Py executable. The launcher starts the bundled server, waits for
+its matching `instance_id`, starts Ren'Py, then shuts down only the server it
+started. It fails fast if the bundled server cannot start.
 
 ## Run
 
 1. Install kernel + local_server (above).
 2. Open the `Assistant/` project in the Ren'Py SDK launcher (8.5+ recommended).
-3. Click Launch / Run. The game spawns the local server, health-checks
-   `instance_id`, loads `/v1/config` and Ren'Py persistent preferences, then:
+3. Click Launch / Run. For development, start `amnesia-agent-local-server`
+   separately. For an exported pack, start the platform `assistant-launcher`.
+   The launcher starts the bundled server first; Ren'Py health-checks the
+   persisted origin, loads `/v1/config` and persistent preferences, then:
    - **Both ready** → apply character (setup-or-repair; prompt injected per turn) → **Main**
    - Missing model/API key → **Config** (cannot proceed without save success)
    - Missing/invalid character → **Character Select**
@@ -49,7 +62,6 @@ Set `AMNESIA_AGENT_PYTHON` if the game must spawn a specific Python for
 Assistant/game/
   api/          # HTTP JSON + SSE (Client, TurnHandle, ASSISTANT_STAGE)
   audio/        # shared looping music service and channel ownership
-  process/      # spawn / poll / shutdown local_server
   state/        # AppState + stage apply + readiness helpers
   home_config/  # Ren'Py persistent preferences (JSON adapter is test-only)
   characters/   # bundled packs, mod loader, and .amod store
@@ -157,7 +169,31 @@ expressions and backgrounds are generated illustrations matching this direction 
   `message`, `choices`, `bg`, `expression`, `bgm`.
 - Unknown `bg` / `expression` / `bgm` ids keep the previous stage and set a status warning.
 - Character `default` BGM starts automatically, loops, and is not restarted when the same track is applied again.
-- Quit blocked while busy; otherwise `POST /v1/shutdown` then exit.
+- Quit blocked while busy; Ren'Py cancels active turns and exits. The exported
+  launcher, not Ren'Py, sends `POST /v1/shutdown` and owns server cleanup.
+
+## Exported pack layout
+
+The native launcher uses these platform-default paths relative to itself:
+
+```text
+pack/
+  assistant-launcher(.exe)
+  server/amnesia-agent-local-server(.exe)
+  Assistant.exe                         # Windows
+  Assistant                             # Linux
+  Assistant.app/Contents/MacOS/Assistant # macOS
+```
+
+CI cross-builds launcher artifacts for Windows amd64, Linux amd64, macOS amd64,
+and macOS arm64. Copy the matching launcher and a native server executable into
+the Ren'Py export. The current Ren'Py build configuration includes
+`game/server/**` when that server executable is supplied; the release assembly
+step remains responsible for placing the native files beside the exported game.
+
+The launcher always starts its bundled server on `127.0.0.1:8765`, even when the
+user has persisted a different trusted URL. Ren'Py may connect to that external
+URL; the launcher still shuts down the bundled child when Ren'Py exits.
 
 ## Tests
 

@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
 
+from api.client import DEFAULT_SERVER_URL, ServerUrlError, normalize_server_url
+
 try:
     import renpy  # type: ignore[import-not-found]
 except ImportError:
@@ -19,7 +21,9 @@ DEFAULT_LANGUAGE: Final[str] = "english"
 SUPPORTED_LANGUAGES: Final[frozenset[str]] = frozenset(
     {"english", "schinese", "tchinese", "japanese", "korean"}
 )
-_CONFIG_KEYS: Final[frozenset[str]] = frozenset({"selected_character_id", "language"})
+_CONFIG_KEYS: Final[frozenset[str]] = frozenset(
+    {"selected_character_id", "language", "server_url"}
+)
 
 
 class ConfigError(RuntimeError):
@@ -34,10 +38,15 @@ class ConfigError(RuntimeError):
 class AssistantConfig:
     selected_character_id: str
     language: str = DEFAULT_LANGUAGE
+    server_url: str = DEFAULT_SERVER_URL
 
 
 def default_config_dict() -> dict[str, Any]:
-    return {"selected_character_id": "", "language": DEFAULT_LANGUAGE}
+    return {
+        "selected_character_id": "",
+        "language": DEFAULT_LANGUAGE,
+        "server_url": DEFAULT_SERVER_URL,
+    }
 
 
 class PersistentAssistantConfigStore:
@@ -58,16 +67,30 @@ class PersistentAssistantConfigStore:
             raise ConfigError("persistent.selected_character_id must be a string")
         if not isinstance(language, str) or language not in SUPPORTED_LANGUAGES:
             raise ConfigError(f"Invalid persistent assistant language: {language!r}")
-        return AssistantConfig(selected_character_id=selected.strip(), language=language)
+        server_url = getattr(persistent, "server_url", DEFAULT_SERVER_URL)
+        try:
+            server_url = normalize_server_url(server_url)
+        except ServerUrlError as error:
+            raise ConfigError(f"Invalid persistent server URL: {error}") from error
+        return AssistantConfig(
+            selected_character_id=selected.strip(),
+            language=language,
+            server_url=server_url,
+        )
 
     def save(self, config: AssistantConfig) -> None:
         persistent = self._persistent()
         persistent.selected_character_id = config.selected_character_id
         persistent.assistant_language = config.language
+        persistent.server_url = config.server_url
         renpy.save_persistent()
 
     def reset(self) -> AssistantConfig:
-        config = AssistantConfig(selected_character_id="", language=DEFAULT_LANGUAGE)
+        config = AssistantConfig(
+            selected_character_id="",
+            language=DEFAULT_LANGUAGE,
+            server_url=DEFAULT_SERVER_URL,
+        )
         self.save(config)
         return config
 
@@ -75,7 +98,9 @@ class PersistentAssistantConfigStore:
         if not isinstance(character_id, str):
             raise ConfigError("selected_character_id must be a string")
         current = self.load()
-        updated = AssistantConfig(character_id.strip(), current.language)
+        updated = AssistantConfig(
+            character_id.strip(), current.language, current.server_url
+        )
         self.save(updated)
         return updated
 
@@ -83,7 +108,21 @@ class PersistentAssistantConfigStore:
         if language not in SUPPORTED_LANGUAGES:
             raise ConfigError(f"Unsupported language: {language!r}")
         current = self.load()
-        updated = AssistantConfig(current.selected_character_id, language)
+        updated = AssistantConfig(
+            current.selected_character_id, language, current.server_url
+        )
+        self.save(updated)
+        return updated
+
+    def set_server_url(self, server_url: str) -> AssistantConfig:
+        try:
+            canonical = normalize_server_url(server_url)
+        except ServerUrlError as error:
+            raise ConfigError(f"Invalid server URL: {error}") from error
+        current = self.load()
+        updated = AssistantConfig(
+            current.selected_character_id, current.language, canonical
+        )
         self.save(updated)
         return updated
 
@@ -145,6 +184,7 @@ class AssistantConfigStore:
         updated = AssistantConfig(
             selected_character_id=character_id.strip(),
             language=config.language,
+            server_url=config.server_url,
         )
         self.save(updated)
         return updated
@@ -156,6 +196,21 @@ class AssistantConfigStore:
         updated = AssistantConfig(
             selected_character_id=config.selected_character_id,
             language=language,
+            server_url=config.server_url,
+        )
+        self.save(updated)
+        return updated
+
+    def set_server_url(self, server_url: str) -> AssistantConfig:
+        try:
+            canonical = normalize_server_url(server_url)
+        except ServerUrlError as error:
+            raise ConfigError(f"Invalid Assistant server URL: {error}") from error
+        config = self.load()
+        updated = AssistantConfig(
+            selected_character_id=config.selected_character_id,
+            language=config.language,
+            server_url=canonical,
         )
         self.save(updated)
         return updated
@@ -206,9 +261,18 @@ class AssistantConfigStore:
                 f"Invalid Assistant config language: {language!r}",
                 path=str(self.path),
             )
+        server_url = raw.get("server_url", DEFAULT_SERVER_URL)
+        try:
+            server_url = normalize_server_url(server_url)
+        except ServerUrlError as error:
+            raise ConfigError(
+                f"Invalid Assistant config server URL: {error}",
+                path=str(self.path),
+            ) from error
         return AssistantConfig(
             selected_character_id=selected.strip(),
             language=language,
+            server_url=server_url,
         )
 
     @staticmethod
@@ -216,4 +280,5 @@ class AssistantConfigStore:
         return {
             "selected_character_id": config.selected_character_id,
             "language": config.language,
+            "server_url": config.server_url,
         }
