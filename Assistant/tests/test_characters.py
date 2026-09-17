@@ -51,6 +51,8 @@ def create_pack(root: Path, name: str = "fake") -> Path:
     pack = root / name
     (pack / "bg").mkdir(parents=True)
     (pack / "expressions").mkdir()
+    (pack / "bgm").mkdir()
+    (pack / "bgm" / "default.ogg").write_bytes(b"OggS\x00fixture")
     (pack / "character.json").write_text(
         json.dumps({"id": name, "display_name": "Fake", "default_bg": "room"}),
         encoding="utf-8",
@@ -73,6 +75,8 @@ class CharacterPackTests(unittest.TestCase):
             self.assertIn(pack.default_bg, pack.backgrounds)
             self.assertIn("neutral", pack.expressions)
             self.assertIn("busy", pack.expressions)
+            self.assertIn("default", pack.bgms)
+            self.assertTrue(pack.bgms["default"].endswith("default.ogg"))
             for asset in list(pack.backgrounds.values()) + list(pack.expressions.values()):
                 self.assertEqual(len(asset.frames), 1)
                 self.assertTrue(Path(asset.path).is_file(), asset.path)
@@ -84,6 +88,21 @@ class CharacterPackTests(unittest.TestCase):
     def test_missing_pack_fails_loud(self) -> None:
         with self.assertRaises(CharacterError):
             load_character("does-not-exist")
+
+    def test_bgm_requires_default_ogg(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            pack = create_pack(Path(directory))
+            (pack / "bgm" / "default.ogg").unlink()
+            (pack / "bgm" / "tense.ogg").write_bytes(b"OggS\x00fixture")
+            with self.assertRaisesRegex(CharacterError, "bgm/default.ogg"):
+                load_character("fake", root=directory)
+
+    def test_invalid_bgm_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            pack = create_pack(Path(directory))
+            (pack / "bgm" / "tense.ogg").write_bytes(b"not ogg")
+            with self.assertRaisesRegex(CharacterError, "Invalid OGG"):
+                load_character("fake", root=directory)
 
     def test_invalid_metadata_encoding_fails_as_character_error(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

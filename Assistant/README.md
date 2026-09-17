@@ -48,6 +48,7 @@ Set `AMNESIA_AGENT_PYTHON` if the game must spawn a specific Python for
 ```text
 Assistant/game/
   api/          # HTTP JSON + SSE (Client, TurnHandle, ASSISTANT_STAGE)
+  audio/        # shared looping music service and channel ownership
   process/      # spawn / poll / shutdown local_server
   state/        # AppState + stage apply + readiness helpers
   home_config/  # Ren'Py persistent preferences (JSON adapter is test-only)
@@ -71,8 +72,9 @@ Each pack lives under `game/characters/<id>/` and uses animation directories:
 | `bg/<id>/0001.png` | numbered background frames |
 | `expressions/<id>/animation.json` | animation metadata for an expression |
 | `expressions/<id>/0001.png` | numbered transparent expression frames |
+| `bgm/<id>.ogg` | looping OGG music track; `default.ogg` is required |
 
-Every pack must provide at least one background plus transparent `neutral` and `busy` expressions. All frames in an animation must share dimensions and transparency. Frame names must be consecutive (`0001.png`, `0002.png`, ...). WebM and other video assets are not supported.
+Every pack must provide at least one background, transparent `neutral` and `busy` expressions, and `bgm/default.ogg`. BGM files must be non-empty OGG files no larger than 25 MiB each. All frames in an animation must share dimensions and transparency. Frame names must be consecutive (`0001.png`, `0002.png`, ...). WebM and other video assets are not supported.
 
 ### Community mods
 
@@ -86,6 +88,7 @@ bg/<id>/animation.json
 bg/<id>/0001.png
 expressions/<id>/animation.json
 expressions/<id>/0001.png
+bgm/default.ogg
 ```
 
 Required manifest fields are `format` (`amnesia-character`), `schema_version` (`1`),
@@ -107,8 +110,9 @@ installed mod.
 2. Rename its folder to a unique lowercase ID such as `creator.moon_priestess`.
 3. Update `character.json` so `id`, `display_name`, and `default_bg` match the new pack.
 4. Edit `prompt.md`.
-5. Put every background under `bg/<id>/` and every expression under
-   `expressions/<id>/`.
+5. Put every background under `bg/<id>/`, every expression under
+   `expressions/<id>/`, and every looping music track under `bgm/<id>.ogg`.
+   Include the required `bgm/default.ogg`.
 6. Put numbered PNG frames (`0001.png`, `0002.png`, ...) and this metadata in every
    asset directory:
 
@@ -150,8 +154,9 @@ expressions and backgrounds are generated illustrations matching this direction 
   Assistant `selected_character_id`.
 - Cancel closes the SSE connection; busy clears on complete (same contract as renpy).
 - `POST /v1/turn` with `response_format` `assistant_stage`:
-  `message`, `choices`, `bg`, `expression`.
-- Unknown `bg` / `expression` ids keep the previous stage and set a status warning.
+  `message`, `choices`, `bg`, `expression`, `bgm`.
+- Unknown `bg` / `expression` / `bgm` ids keep the previous stage and set a status warning.
+- Character `default` BGM starts automatically, loops, and is not restarted when the same track is applied again.
 - Quit blocked while busy; otherwise `POST /v1/shutdown` then exit.
 
 ## Tests

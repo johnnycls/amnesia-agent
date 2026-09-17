@@ -1,4 +1,4 @@
-"""Load and validate data-only character animation packs."""
+"""Load and validate data-only character media packs."""
 
 from __future__ import annotations
 
@@ -19,9 +19,11 @@ MAX_ANIMATION_FRAMES = 120
 MAX_ANIMATION_FPS = 60.0
 MAX_IMAGE_DIMENSION = 4096
 MAX_ANIMATION_BYTES = 25 * 1024 * 1024
+MAX_BGM_BYTES = 25 * 1024 * 1024
 _ASSET_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 _CHARACTER_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{1,63}$")
 _FRAME_RE = re.compile(r"^(\d{4})\.png$")
+_BGM_FILE_RE = re.compile(r"^([a-z0-9][a-z0-9_-]*)\.ogg$")
 _METADATA_KEYS = frozenset({"id", "display_name", "default_bg", "version"})
 _VERSION_RE = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 _ANIMATION_KEYS = frozenset({"type", "fps", "loop"})
@@ -53,13 +55,14 @@ class MediaAsset:
 
 @dataclass(frozen=True)
 class CharacterPack:
-    """Resolved character metadata, animated media assets, and prompt."""
+    """Resolved character metadata, media assets, BGM tracks, and prompt."""
 
     id: str
     display_name: str
     default_bg: str
     backgrounds: dict[str, MediaAsset]
     expressions: dict[str, MediaAsset]
+    bgms: dict[str, str]
     prompt: str
     pack_dir: str
     source: str = "bundled"
@@ -152,6 +155,7 @@ def load_character(
     expressions = _discover_assets(
         pack_dir, "expressions", "expression", character_id, require_alpha=True
     )
+    bgms = _discover_bgms(pack_dir, character_id)
     if not backgrounds:
         raise CharacterError(f"Character {character_id} must have at least one bg asset")
     if "neutral" not in expressions or "busy" not in expressions:
@@ -162,6 +166,8 @@ def load_character(
         raise CharacterError(
             f"default_bg {default_bg!r} has no matching bg asset for {character_id}"
         )
+    if "default" not in bgms:
+        raise CharacterError(f"Character {character_id} must have bgm/default.ogg")
 
     try:
         with open(prompt_path, encoding="utf-8") as handle:
@@ -189,6 +195,7 @@ def load_character(
         default_bg=default_bg,
         backgrounds=backgrounds,
         expressions=expressions,
+        bgms=bgms,
         prompt=prompt,
         pack_dir=os.path.abspath(pack_dir),
         source=source,
@@ -273,6 +280,64 @@ def _discover_assets(
     if not assets:
         raise CharacterError(f"No {kind} assets found in {directory} for {character_id}")
     return assets
+
+
+def _discover_bgms(pack_dir: str, character_id: str) -> dict[str, str]:
+    """Discover and validate one OGG file per named background track."""
+    directory = Path(pack_dir) / "bgm"
+    if not directory.is_dir():
+        raise CharacterError(f"Missing bgm/ directory for {character_id}")
+
+    pack_root = Path(pack_dir).resolve()
+    bgms: dict[str, str] = {}
+    try:
+        entries = sorted(directory.iterdir(), key=lambda path: path.name)
+    except OSError as error:
+        raise CharacterError(f"Cannot list bgm/ for {character_id}: {error}") from error
+
+    for path in entries:
+        if not path.is_file():
+            raise CharacterError(
+                f"BGM {path.name!r} must be an OGG file for {character_id}"
+            )
+        match = _BGM_FILE_RE.fullmatch(path.name)
+        if match is None:
+            raise CharacterError(
+                f"BGM {path.name!r} must use lowercase <id>.ogg naming for {character_id}"
+            )
+        bgm_id = match.group(1)
+        if bgm_id in bgms:
+            raise CharacterError(f"Duplicate BGM id {bgm_id!r} for {character_id}")
+
+        resolved = path.resolve(strict=False)
+        try:
+            resolved.relative_to(pack_root)
+        except ValueError as error:
+            raise CharacterError(
+                f"BGM escapes character pack for {character_id}: {path.name}"
+            ) from error
+        try:
+            size = resolved.stat().st_size
+            if size <= 0:
+                raise CharacterError(f"BGM {path.name} is empty for {character_id}")
+            if size > MAX_BGM_BYTES:
+                raise CharacterError(
+                    f"BGM {path.name} exceeds {MAX_BGM_BYTES} bytes for {character_id}"
+                )
+            with resolved.open("rb") as handle:
+                if handle.read(4) != b"OggS":
+                    raise CharacterError(
+                        f"Invalid OGG BGM for {character_id}: {path.name}"
+                    )
+        except OSError as error:
+            raise CharacterError(
+                f"Cannot read BGM for {character_id}: {path.name}: {error}"
+            ) from error
+        bgms[bgm_id] = os.fspath(resolved)
+
+    if not bgms:
+        raise CharacterError(f"No BGM assets found in {directory} for {character_id}")
+    return bgms
 
 
 def _load_animation(

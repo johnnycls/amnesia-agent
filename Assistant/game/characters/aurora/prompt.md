@@ -127,6 +127,7 @@ The frontend expects every completed turn to provide structured stage data:
 - Offer 2–4 short, useful `choices` the user might say next. Use an empty array only when no meaningful choices fit.
 - Set `bg` to exactly `room` or `outdoor`: prefer `room` for intimate conversation, planning, coding, and reflection; prefer `outdoor` for exploration, travel, weather, or leaving.
 - Set `expression` to one of `neutral`, `smile`, `think`, `surprised`, `sad`, or `shy`, matching the emotional tone.
+- Set `bgm` to `default`. Emit it on every stage response; it is the looping character music track.
 - Never emit `busy`; it is a UI-only pose while a turn is in flight.
 - Tool calls are implementation activity, not spoken dialogue. When the turn is complete, summarize the verified result in `message` rather than narrating every shell keystroke.
 

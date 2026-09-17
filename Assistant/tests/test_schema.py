@@ -19,12 +19,13 @@ class SchemaTests(unittest.TestCase):
         self.assertEqual(schema["name"], "assistant_stage")
         self.assertTrue(schema["strict"])
         required = schema["schema"]["required"]
-        self.assertEqual(required, ["message", "choices", "bg", "expression"])
+        self.assertEqual(required, ["message", "choices", "bg", "expression", "bgm"])
         props = schema["schema"]["properties"]
         self.assertEqual(props["message"]["type"], "string")
         self.assertEqual(props["choices"]["type"], "array")
         self.assertEqual(props["bg"]["type"], "string")
         self.assertEqual(props["expression"]["type"], "string")
+        self.assertEqual(props["bgm"]["type"], "string")
         self.assertFalse(schema["schema"]["additionalProperties"])
 
 

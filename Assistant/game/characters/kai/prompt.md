@@ -130,6 +130,7 @@ The frontend expects structured stage data on every completed turn:
 - Offer 2–4 short, useful `choices` the user could say next. Use an empty array only when none genuinely fit.
 - Set `bg` to exactly `room` or `outdoor`: prefer `room` for planning, coding, debugging, and work; prefer `outdoor` for movement, travel, exploration, weather, or field work.
 - Set `expression` to one of `neutral`, `smile`, `think`, `surprised`, `sad`, or `shy`, matching the tone.
+- Set `bgm` to `default`. Emit it on every stage response; it is the looping character music track.
 - Never emit `busy`; it is a UI-only pose while a turn is running.
 - Tool calls are not dialogue. Once work is complete, report verified results, failures, and next steps in `message` without pretending that internal shell output is a conversation.
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-# Stage fields for Assistant v1: message, choices, bg, expression.
+# Stage fields for Assistant v1: message, choices, bg, expression, bgm.
 ASSISTANT_STAGE: dict[str, Any] = {
     "type": "json_schema",
     "json_schema": {
@@ -17,8 +17,9 @@ ASSISTANT_STAGE: dict[str, Any] = {
                 "choices": {"type": "array", "items": {"type": "string"}},
                 "bg": {"type": "string"},
                 "expression": {"type": "string"},
+                "bgm": {"type": "string"},
             },
-            "required": ["message", "choices", "bg", "expression"],
+            "required": ["message", "choices", "bg", "expression", "bgm"],
             "additionalProperties": False,
         },
     },

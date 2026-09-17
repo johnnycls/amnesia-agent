@@ -29,6 +29,8 @@ class ModStoreTests(unittest.TestCase):
         (source / "bg" / "room").mkdir(parents=True)
         (source / "expressions" / "neutral").mkdir(parents=True)
         (source / "expressions" / "busy").mkdir(parents=True)
+        (source / "bgm").mkdir(parents=True)
+        (source / "bgm" / "default.ogg").write_bytes(b"OggS\x00fixture")
         (source / "character.json").write_text(
             json.dumps(
                 {
@@ -87,6 +89,19 @@ class ModStoreTests(unittest.TestCase):
                 "creator.character", root=store.installed, source="mod", version="1.0.0"
             )
             self.assertEqual(pack.source, "mod")
+
+    def test_bgm_directory_is_allowed_in_archive(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            inbox = root / "inbox"
+            inbox.mkdir()
+            self._archive(inbox)
+            store = ModStore(root)
+
+            results = store.install_inbox()
+
+            self.assertTrue(results[0].installed)
+            self.assertTrue((store.installed / "creator.character" / "bgm" / "default.ogg").is_file())
 
     def test_invalid_archive_stays_in_inbox_with_error(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

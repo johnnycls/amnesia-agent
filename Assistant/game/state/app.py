@@ -7,6 +7,7 @@ import threading
 from typing import Any
 
 from api.client import ApiError, Client, TurnHandle, TurnTimeoutError, invoke
+from audio.player import music
 from characters.loader import (
     CharacterError,
     CharacterPack,
@@ -73,11 +74,14 @@ class AppState:
 
         self.characters: list[CharacterPack] = []
         self.character: CharacterPack | None = None
+        self.music = music
         self.current_bg = ""
         self.current_expression = ""
+        self.current_bgm = ""
         self.bg_path = ""
         self.bg_asset: MediaAsset | None = None
         self.bg_displayable: Any = None
+        self.bgm_path = ""
         self.sprite_path = ""
         self.sprite_asset: MediaAsset | None = None
         self.sprite_displayable: Any = None
@@ -485,6 +489,7 @@ class AppState:
         self.character = pack
         self.current_bg = pack.default_bg
         self.current_expression = "neutral"
+        self.current_bgm = "default"
         self._sync_stage_paths()
         self.last_assistant_text = ""
         self.last_assistant_choices = []
@@ -547,6 +552,7 @@ class AppState:
         self.character = pack
         self.current_bg = pack.default_bg
         self.current_expression = "neutral"
+        self.current_bgm = "default"
         self.last_assistant_text = ""
         self.last_assistant_choices = []
         self._sync_stage_paths()
@@ -669,8 +675,10 @@ class AppState:
             data,
             background_ids=set(pack.backgrounds),
             expression_ids=set(pack.expressions) - {"busy"},
+            bgm_ids=set(getattr(pack, "bgms", {})),
             previous_bg=self.current_bg,
             previous_expression=self.current_expression,
+            previous_bgm=self.current_bgm,
         )
         self.last_assistant_text = result.message
         self.last_assistant_choices = result.choices
@@ -678,6 +686,8 @@ class AppState:
             self.current_bg = result.bg
         if result.expression is not None:
             self.current_expression = result.expression
+        if result.bgm is not None:
+            self.current_bgm = result.bgm
         self._sync_stage_paths()
         if result.warnings:
             self.status = "Warning: " + "; ".join(result.warnings)
@@ -932,6 +942,7 @@ class AppState:
             self.status = "Cannot quit while an operation is in progress."
             self._refresh()
             return
+        self.music.stop()
         self.server.stop()
         self.ready = False
         if renpy is not None:
@@ -940,6 +951,7 @@ class AppState:
     def stop(self) -> None:
         if self.turn_handle is not None:
             self.turn_handle.cancel()
+        self.music.stop()
         self.server.stop()
 
     # --- helpers -------------------------------------------------------------
@@ -958,6 +970,7 @@ class AppState:
             self.bg_asset = None
             self.bg_path = ""
             self.bg_displayable = None
+            self.bgm_path = ""
             self.sprite_asset = None
             self.sprite_path = ""
             self.sprite_displayable = None
@@ -965,6 +978,9 @@ class AppState:
         self.bg_asset = pack.backgrounds.get(self.current_bg)
         self.bg_path = self.bg_asset.path if self.bg_asset is not None else ""
         self.bg_displayable = self._displayable_for_asset(self.bg_asset)
+        self.bgm_path = getattr(pack, "bgms", {}).get(self.current_bgm, "")
+        if self.bgm_path:
+            self.music.play_looped(self.bgm_path)
         # `busy` is UI-only while a turn is in flight; LLM stage ids stay elsewhere.
         if self.busy and "busy" in pack.expressions:
             self.sprite_asset = pack.expressions["busy"]

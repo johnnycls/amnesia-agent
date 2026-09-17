@@ -37,7 +37,7 @@ _VERSION_RE = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 _ALLOWED_ROOT_FILES = frozenset(
     {"manifest.json", "character.json", "prompt.md", "README.md", "LICENSE"}
 )
-_ALLOWED_ROOT_DIRS = frozenset({"bg", "expressions"})
+_ALLOWED_ROOT_DIRS = frozenset({"bg", "bgm", "expressions"})
 
 
 class ModError(RuntimeError):

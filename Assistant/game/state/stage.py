@@ -14,6 +14,7 @@ class StageApplyResult:
     choices: list[str]
     bg: str | None
     expression: str | None
+    bgm: str | None
     warnings: list[str]
 
 
@@ -22,10 +23,12 @@ def apply_stage(
     *,
     background_ids: set[str],
     expression_ids: set[str],
+    bgm_ids: set[str],
     previous_bg: str,
     previous_expression: str,
+    previous_bgm: str,
 ) -> StageApplyResult:
-    """Extract message/choices; keep previous bg/expression when ids are invalid."""
+    """Extract stage fields; keep previous assets when ids are invalid."""
     warnings: list[str] = []
 
     raw_message = data.get("message", data.get("content", ""))
@@ -54,10 +57,20 @@ def apply_stage(
             f"Unknown expression id {raw_expr!r}; kept {previous_expression!r}"
         )
 
+    bgm = previous_bgm
+    raw_bgm = data.get("bgm")
+    if isinstance(raw_bgm, str) and raw_bgm in bgm_ids:
+        bgm = raw_bgm
+    elif raw_bgm is None:
+        warnings.append(f"Missing bgm; kept {previous_bgm!r}")
+    else:
+        warnings.append(f"Unknown bgm id {raw_bgm!r}; kept {previous_bgm!r}")
+
     return StageApplyResult(
         message=message,
         choices=choices,
         bg=bg,
         expression=expression,
+        bgm=bgm,
         warnings=warnings,
     )

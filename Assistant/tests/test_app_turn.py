@@ -7,11 +7,13 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import Mock, call
 
 GAME = Path(__file__).parents[1] / "game"
 sys.path.insert(0, str(GAME))
 
 from api.client import TurnTimeoutError  # noqa: E402
+from audio.player import MusicPlayer  # noqa: E402
 from characters.loader import MediaAsset  # noqa: E402
 from state.app import AppState  # noqa: E402
 
@@ -69,6 +71,42 @@ class TurnLifecycleTests(unittest.TestCase):
         app.current_bg = "room"
         app.current_expression = "neutral"
         return app, client
+
+    def test_stage_bgm_changes_once_and_same_track_does_not_restart(self) -> None:
+        app, _ = self._app()
+        app.character.bgms = {
+            "default": "/packs/aurora/default.ogg",
+            "tense": "/packs/aurora/tense.ogg",
+        }
+        app.current_bgm = "default"
+        backend = Mock()
+        app.music = MusicPlayer(backend)
+
+        app._sync_stage_paths()
+        app._apply_assistant_stage(
+            {
+                "message": "first",
+                "choices": [],
+                "bg": "room",
+                "expression": "neutral",
+                "bgm": "default",
+            }
+        )
+        app._apply_assistant_stage(
+            {
+                "message": "second",
+                "choices": [],
+                "bg": "room",
+                "expression": "neutral",
+                "bgm": "tense",
+            }
+        )
+
+        self.assertEqual(app.current_bgm, "tense")
+        self.assertEqual(backend.play.call_args_list, [
+            call("/packs/aurora/default.ogg", channel="music", loop=True),
+            call("/packs/aurora/tense.ogg", channel="music", loop=True),
+        ])
 
     def test_old_turn_completion_cannot_clear_new_turn(self) -> None:
         app, client = self._app()
