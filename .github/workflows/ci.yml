@@ -14,8 +14,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       kernel: ${{ steps.select.outputs.kernel }}
-      local_server: ${{ steps.select.outputs.local_server }}
-      assistant: ${{ steps.select.outputs.assistant }}
+      server: ${{ steps.select.outputs.server }}
+      renpy_client: ${{ steps.select.outputs.renpy_client }}
       workflows: ${{ steps.select.outputs.workflows }}
     steps:
       - uses: actions/checkout@v7
@@ -26,11 +26,11 @@ jobs:
           filters: |
             kernel:
               - 'kernel/**'
-            local_server:
-              - 'local_server/**'
-            assistant:
-              - 'Assistant/**'
-              - 'cmd/assistant-launcher/**'
+            server:
+              - 'server/**'
+            renpy_client:
+              - 'renpy-client/**'
+              - 'cmd/local-renpy-launcher/**'
             workflows:
               - '.github/workflows/**'
       - id: select
@@ -50,15 +50,15 @@ jobs:
 
           if [[ "$force_all" == "true" ]]; then
             set_out kernel true
-            set_out local_server true
-            set_out assistant true
+            set_out server true
+            set_out renpy_client true
             set_out workflows true
             exit 0
           fi
 
           kernel="${{ steps.filter.outputs.kernel }}"
-          local_server="${{ steps.filter.outputs.local_server }}"
-          assistant="${{ steps.filter.outputs.assistant }}"
+          server="${{ steps.filter.outputs.server }}"
+          renpy_client="${{ steps.filter.outputs.renpy_client }}"
           workflows="${{ steps.filter.outputs.workflows }}"
 
           # Workflow edits should still validate kernel CI paths at minimum.
@@ -67,8 +67,8 @@ jobs:
           fi
 
           set_out kernel "$kernel"
-          set_out local_server "$local_server"
-          set_out assistant "$assistant"
+          set_out server "$server"
+          set_out renpy_client "$renpy_client"
           set_out workflows "$workflows"
 
   kernel-lint:
@@ -86,19 +86,19 @@ jobs:
       - working-directory: kernel
         run: mypy
 
-  local-server-lint:
+  server-lint:
     needs: changes
-    if: needs.changes.outputs.local_server == 'true'
+    if: needs.changes.outputs.server == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - run: python -m pip install ./kernel ./local_server ruff mypy
-      - working-directory: local_server
+      - run: python -m pip install ./kernel ./server ruff mypy
+      - working-directory: server
         run: ruff check .
-      - working-directory: local_server
+      - working-directory: server
         run: mypy
 
   kernel-test:
@@ -119,9 +119,9 @@ jobs:
       - working-directory: kernel
         run: python -m unittest discover -t . -s tests -v
 
-  local-server-test:
+  server-test:
     needs: changes
-    if: needs.changes.outputs.local_server == 'true'
+    if: needs.changes.outputs.server == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -133,13 +133,13 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
-      - run: python -m pip install ./kernel ./local_server
-      - working-directory: local_server
+      - run: python -m pip install ./kernel ./server
+      - working-directory: server
         run: python -m unittest discover -t . -s tests -v
 
-  assistant-test:
+  renpy-client-test:
     needs: changes
-    if: needs.changes.outputs.assistant == 'true'
+    if: needs.changes.outputs.renpy_client == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -151,14 +151,14 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
-      - working-directory: Assistant
+      - working-directory: renpy-client
         run: python -m unittest discover -t . -s tests -v
 
   kernel-build:
     needs: changes
     if: >-
       needs.changes.outputs.kernel == 'true'
-      || needs.changes.outputs.local_server == 'true'
+      || needs.changes.outputs.server == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -175,9 +175,9 @@ jobs:
           path: dist/kernel
           if-no-files-found: error
 
-  local-server-build:
+  server-build:
     needs: [changes, kernel-build]
-    if: needs.changes.outputs.local_server == 'true'
+    if: needs.changes.outputs.server == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -190,18 +190,18 @@ jobs:
           path: dist/kernel
       - run: python -m pip install --upgrade build
       - run: python -m pip install --no-cache-dir --find-links dist/kernel amnesia-agent-kernel==0.0.0a0
-      - run: python -m build local_server --outdir dist/local-server
-      - run: python -m pip install --no-cache-dir --find-links dist/kernel dist/local-server/*.whl
-      - run: python -c "import amnesia_agent_local_server"
+      - run: python -m build server --outdir dist/server
+      - run: python -m pip install --no-cache-dir --find-links dist/kernel dist/server/*.whl
+      - run: python -c "import amnesia_agent_server"
       - uses: actions/upload-artifact@v7
         with:
-          name: python-local-server-dist
-          path: dist/local-server
+          name: python-server-dist
+          path: dist/server
           if-no-files-found: error
 
-  local-server-native-build:
+  server-native-build:
     needs: changes
-    if: needs.changes.outputs.local_server == 'true'
+    if: needs.changes.outputs.server == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -220,23 +220,23 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - run: python -m pip install ./kernel ./local_server pyinstaller
+      - run: python -m pip install ./kernel ./server pyinstaller
       - shell: bash
         run: >-
-          python -m PyInstaller --onefile --name amnesia-agent-local-server
-          --paths kernel --paths local_server
+          python -m PyInstaller --onefile --name amnesia-agent-server
+          --paths kernel --paths server
           --collect-submodules fastapi --collect-submodules uvicorn
           --collect-submodules amnesia_agent_kernel
-          local_server/amnesia_agent_local_server/__main__.py
+          server/amnesia_agent_server/__main__.py
       - uses: actions/upload-artifact@v7
         with:
-          name: local-server-native-${{ matrix.suffix }}
-          path: dist/amnesia-agent-local-server*
+          name: server-native-${{ matrix.suffix }}
+          path: dist/amnesia-agent-server*
           if-no-files-found: error
 
-  assistant-launcher-build:
+  local-renpy-launcher-build:
     needs: changes
-    if: needs.changes.outputs.assistant == 'true'
+    if: needs.changes.outputs.renpy_client == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -245,35 +245,35 @@ jobs:
           - goos: windows
             goarch: amd64
             suffix: windows-amd64
-            binary: assistant-launcher.exe
+            binary: local-renpy-launcher.exe
           - goos: darwin
             goarch: amd64
             suffix: macos-amd64
-            binary: assistant-launcher
+            binary: local-renpy-launcher
           - goos: darwin
             goarch: arm64
             suffix: macos-arm64
-            binary: assistant-launcher
+            binary: local-renpy-launcher
           - goos: linux
             goarch: amd64
             suffix: linux-amd64
-            binary: assistant-launcher
+            binary: local-renpy-launcher
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v5
         with:
           go-version: "1.22"
-      - working-directory: cmd/assistant-launcher
+      - working-directory: cmd/local-renpy-launcher
         run: go test ./...
-      - working-directory: cmd/assistant-launcher
+      - working-directory: cmd/local-renpy-launcher
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
-        run: go build -trimpath -o "../../assistant-launcher-${{ matrix.suffix }}/${{ matrix.binary }}" .
+        run: go build -trimpath -o "../../local-renpy-launcher-${{ matrix.suffix }}/${{ matrix.binary }}" .
       - uses: actions/upload-artifact@v7
         with:
-          name: assistant-launcher-${{ matrix.suffix }}
-          path: assistant-launcher-${{ matrix.suffix }}
+          name: local-renpy-launcher-${{ matrix.suffix }}
+          path: local-renpy-launcher-${{ matrix.suffix }}
           if-no-files-found: error
 
   release:
@@ -281,14 +281,14 @@ jobs:
     needs:
       - changes
       - kernel-lint
-      - local-server-lint
+      - server-lint
       - kernel-test
-      - local-server-test
-      - assistant-test
+      - server-test
+      - renpy-client-test
       - kernel-build
-      - local-server-build
-      - local-server-native-build
-      - assistant-launcher-build
+      - server-build
+      - server-native-build
+      - local-renpy-launcher-build
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -298,21 +298,21 @@ jobs:
         with:
           name: python-kernel-dist
           path: release-assets/kernel
-      - name: Download Python local server artifact
+      - name: Download Python server artifact
         uses: actions/download-artifact@v8
         with:
-          name: python-local-server-dist
-          path: release-assets/local-server
-      - name: Download native local-server artifacts
+          name: python-server-dist
+          path: release-assets/server
+      - name: Download native server artifacts
         uses: actions/download-artifact@v8
         with:
-          pattern: local-server-native-*
-          path: release-assets/native-local-server
+          pattern: server-native-*
+          path: release-assets/native-server
           merge-multiple: false
       - name: Download launcher artifacts
         uses: actions/download-artifact@v8
         with:
-          pattern: assistant-launcher-*
+          pattern: local-renpy-launcher-*
           path: release-assets/launchers
           merge-multiple: false
       - name: Package release assets
@@ -321,9 +321,9 @@ jobs:
           set -euo pipefail
           cd "$GITHUB_WORKSPACE/release-assets"
           zip -qr python-kernel-dist.zip kernel
-          zip -qr python-local-server-dist.zip local-server
-          zip -qr assistant-launchers.zip launchers
-          zip -qr native-local-servers.zip native-local-server
+          zip -qr python-server-dist.zip server
+          zip -qr local-renpy-launchers.zip launchers
+          zip -qr native-servers.zip native-server
           ls -l
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
@@ -335,6 +335,6 @@ jobs:
           fail_on_unmatched_files: true
           files: |
             release-assets/python-kernel-dist.zip
-            release-assets/python-local-server-dist.zip
-            release-assets/assistant-launchers.zip
-            release-assets/native-local-servers.zip
+            release-assets/python-server-dist.zip
+            release-assets/local-renpy-launchers.zip
+            release-assets/native-servers.zip

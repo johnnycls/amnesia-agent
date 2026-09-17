@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "amnesia-agent-server"
+version = "0.0.0a0"
+description = "Reusable HTTP server for the amnesia agent kernel."
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10,<3.15"
+dependencies = [
+    "amnesia-agent-kernel>=0.0.0a0,<0.1.0",
+    "fastapi>=0.115,<1",
+    "uvicorn>=0.30,<1",
+    "segno>=1.6,<2",
+]
+
+[project.scripts]
+amnesia-agent-server = "amnesia_agent_server.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["amnesia_agent_server*"]
+
+[tool.setuptools.package-data]
+amnesia_agent_server = ["py.typed"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "RUF"]
+
+[tool.mypy]
+files = ["amnesia_agent_server"]
+mypy_path = ["../kernel"]
+disallow_untyped_defs = true
+check_untyped_defs = true
+warn_return_any = true
+warn_unused_ignores = true
+no_implicit_reexport = true

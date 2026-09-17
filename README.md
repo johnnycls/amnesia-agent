@@ -25,21 +25,21 @@ keeps re-deciding as conditions change:
 - **Its own capabilities** — nothing is impossible with bash: install packages, call APIs, compile code, write scripts. Whatever ability the agent lacks, it builds itself into its workspace, not into this code.
 - **Its own workspace** — everything it learns, builds, and improves lives in `~/.amnesia-agent/`. Task after task, the workspace grows while the program running it stays exactly the same.
 
-An agent doesn't need dozens of bespoke tools; it needs **one tool that can do everything**, and the freedom to use it. The harness's only jobs are relaying messages, executing bash, failing loudly when something breaks — and it does them as a **headless kernel**. The shipping UI is the Ren'Py `Assistant/` app; you can build others (web UIs, bots, voice agents) on the same core.
+An agent doesn't need dozens of bespoke tools; it needs **one tool that can do everything**, and the freedom to use it. The harness's only jobs are relaying messages, executing bash, failing loudly when something breaks — and it does them as a **headless kernel**. The shipping UI is the Ren'Py `renpy-client/` app; you can build others (web UIs, bots, voice agents) on the same core.
 
 ## Quick start
 
 ```text
 pip install ./kernel
-pip install ./local_server
-amnesia-agent-local-server
+pip install ./server
+amnesia-agent-server
 ```
 
-Open the Ren'Py project in [`Assistant/`](Assistant/) with the Ren'Py launcher.
-The frontend connects to an already-running local server and streams agent events
+Open the Ren'Py project in [`renpy-client/`](renpy-client/) with the Ren'Py launcher.
+The frontend connects to an already-running server and streams agent events
 over HTTP. For an exported pack, the native launcher starts the bundled server
 before Ren'Py and shuts it down after Ren'Py exits. Configure model, API key, and
-server origin in the app (persisted under `~/.amnesia-agent-local-server/` /
+server origin in the app (persisted under `~/.amnesia-agent-server/` /
 `~/.amnesia-agent-assistant/`).
 
 ## Packages
@@ -50,8 +50,8 @@ plus one frontend:
 | Package | Description |
 |---|---|
 | [`kernel/`](kernel/) | Frontend-agnostic async agent kernel — the core. |
-| [`local_server/`](local_server/) | Reusable loopback FastAPI server for desktop frontends. |
-| [`Assistant/`](Assistant/) | Ren'Py character-stage client (locked boot: Config/Character → Main; default workspace). |
+| [`server/`](server/) | Reusable loopback FastAPI server for desktop frontends. |
+| [`renpy-client/`](renpy-client/) | Ren'Py character-stage client (locked boot: Config/Character → Main; default workspace). |
 
 ## Project structure
 
@@ -59,16 +59,16 @@ plus one frontend:
 amnesia-agent/
 ├── kernel/                  # amnesia-agent-kernel (pip package)
 │   └── amnesia_agent_kernel/
-├── local_server/            # amnesia-agent-local-server (pip package)
-│   └── amnesia_agent_local_server/
-├── Assistant/               # Ren'Py character-stage frontend
+├── server/            # amnesia-agent-server (pip package)
+│   └── amnesia_agent_server/
+├── renpy-client/               # Ren'Py character-stage frontend
 │   └── game/
-├── cmd/assistant-launcher/   # Cross-platform exported-pack supervisor
+├── cmd/local-renpy-launcher/   # Cross-platform exported-pack supervisor
 └── .github/workflows/ci.yml
 ```
 
-The **kernel** is the core. The **local server** depends on it. The **Assistant**
-frontend talks to the local server over HTTP, streaming agent events via
+The **kernel** is the core. The **server** depends on it. The **Ren'Py client**
+frontend talks to the server over HTTP, streaming agent events via
 Server-Sent Events.
 
 ## Development
@@ -76,22 +76,22 @@ Server-Sent Events.
 Install Python packages in editable mode:
 
 ```text
-pip install -e ./kernel -e ./local_server
+pip install -e ./kernel -e ./server
 ```
 
 Run linters and type checks:
 
 ```text
 cd kernel && ruff check . && mypy
-cd local_server && ruff check . && mypy
+cd server && ruff check . && mypy
 ```
 
 Run tests:
 
 ```text
 cd kernel && python -m unittest discover
-cd local_server && python -m unittest discover
-cd Assistant && python -m unittest discover
+cd server && python -m unittest discover
+cd renpy-client && python -m unittest discover
 ```
 
 See each sub-project's README for specific setup instructions.
