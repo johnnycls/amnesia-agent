@@ -54,11 +54,11 @@ class ModManifest:
 
 @dataclass(frozen=True)
 class InstallResult:
-    """Outcome for one inbox archive.
+    """Outcome for one explicitly selected archive.
 
-    ``installed`` is True only when this archive became the live install.
-    Valid but older inbox archives for the same id are reported with
-    ``installed=False`` and a ``note`` such as ``superseded by 1.2.0``.
+    The caller owns the selected temporary file and must remove it after this
+    result is returned. ``installed`` is true only when this archive became the
+    live install. An older archive is a successful no-op with a ``note``.
     """
 
     archive: str
@@ -95,13 +95,13 @@ class ModStore:
 
     def __init__(self, root: str | os.PathLike[str] | None = None) -> None:
         self.root = Path(root).expanduser().resolve(strict=False) if root else default_mods_root()
-        self.inbox = self.root / "inbox"
+        self.staging = self.root / ".staging"
         self.installed = self.root / "installed"
         self.exports = self.root / "exports"
         self._ensure_directories()
 
     def _ensure_directories(self) -> None:
-        self.inbox.mkdir(parents=True, exist_ok=True)
+        self.staging.mkdir(parents=True, exist_ok=True)
         self.installed.mkdir(parents=True, exist_ok=True)
         self.exports.mkdir(parents=True, exist_ok=True)
 
@@ -109,75 +109,57 @@ class ModStore:
     def installed_root(self) -> str:
         return os.fspath(self.installed)
 
-    def install_inbox(self, reserved_ids: set[str] | None = None) -> list[InstallResult]:
-        """Install highest valid archive per ID and leave rejected files in inbox."""
-        self._ensure_directories()
-        candidates: list[_Candidate] = []
-        results: list[InstallResult] = []
-        for archive in sorted(self.inbox.glob("*.amod"), key=lambda p: p.name.lower()):
-            try:
-                candidate = self._stage_archive(archive)
-                if reserved_ids and candidate.manifest.id in reserved_ids:
-                    raise ModError(
-                        f"Mod id {candidate.manifest.id!r} conflicts with a bundled character"
-                    )
-                candidates.append(candidate)
-            except Exception as error:  # noqa: BLE001 — isolate untrusted archives
-                message = str(error)
-                self._write_error(archive, message)
-                results.append(
-                    InstallResult(
-                        archive=os.fspath(archive),
-                        mod_id=None,
-                        version=None,
-                        installed=False,
-                        error=message,
-                    )
+    def install_selected_archive(
+        self,
+        archive: str | os.PathLike[str],
+        reserved_ids: set[str] | None = None,
+    ) -> InstallResult:
+        """Validate and activate exactly one explicitly selected archive.
+
+        This method never scans ``staging`` or any other directory and never
+        writes an adjacent error report. The caller owns and cleans up
+        ``archive`` after the result is returned.
+        """
+        source = Path(archive)
+        candidate: _Candidate | None = None
+        try:
+            candidate = self._stage_archive(source)
+            manifest = candidate.manifest
+            if reserved_ids and manifest.id in reserved_ids:
+                raise ModError(
+                    f"Mod id {manifest.id!r} conflicts with a bundled character"
                 )
 
-        grouped: dict[str, list[_Candidate]] = {}
-        for candidate in candidates:
-            grouped.setdefault(candidate.manifest.id, []).append(candidate)
+            installed = self.installed_manifests().get(manifest.id)
+            if installed is not None and _version_key(manifest.version) < _version_key(
+                installed.version
+            ):
+                return InstallResult(
+                    archive=os.fspath(source),
+                    mod_id=manifest.id,
+                    version=manifest.version,
+                    installed=False,
+                    note=f"superseded by installed {installed.version}",
+                )
 
-        for mod_id, group in grouped.items():
-            chosen = max(group, key=lambda item: _version_key(item.manifest.version))
-            try:
-                self._activate(chosen)
-                for candidate in group:
-                    candidate.archive.unlink(missing_ok=True)
-                    self._clear_error(candidate.archive)
-                    activated = candidate is chosen
-                    results.append(
-                        InstallResult(
-                            archive=os.fspath(candidate.archive),
-                            mod_id=mod_id,
-                            version=candidate.manifest.version,
-                            installed=activated,
-                            note=(
-                                ""
-                                if activated
-                                else f"superseded by {chosen.manifest.version}"
-                            ),
-                        )
-                    )
-            except (OSError, ModError) as error:
-                message = str(error)
-                for candidate in group:
-                    self._write_error(candidate.archive, message)
-                    results.append(
-                        InstallResult(
-                            archive=os.fspath(candidate.archive),
-                            mod_id=mod_id,
-                            version=candidate.manifest.version,
-                            installed=False,
-                            error=message,
-                        )
-                    )
-            finally:
-                for candidate in group:
-                    shutil.rmtree(candidate.staging_root, ignore_errors=True)
-
-        return sorted(results, key=lambda item: item.archive.lower())
+            self._activate(candidate)
+            return InstallResult(
+                archive=os.fspath(source),
+                mod_id=manifest.id,
+                version=manifest.version,
+                installed=True,
+            )
+        except (ModError, OSError, UnicodeError, ValueError, zipfile.BadZipFile) as error:
+            return InstallResult(
+                archive=os.fspath(source),
+                mod_id=candidate.manifest.id if candidate is not None else None,
+                version=candidate.manifest.version if candidate is not None else None,
+                installed=False,
+                error=str(error),
+            )
+        finally:
+            if candidate is not None:
+                shutil.rmtree(candidate.staging_root, ignore_errors=True)
 
     def export_character(self, pack: CharacterPack) -> Path:
         """Export a validated character pack as a root-layout .amod archive."""
@@ -237,7 +219,7 @@ class ModStore:
     def _stage_archive(self, archive: Path) -> _Candidate:
         if archive.stat().st_size > MAX_ARCHIVE_BYTES:
             raise ModError(f"Archive exceeds {MAX_ARCHIVE_BYTES} bytes")
-        staging_root = Path(tempfile.mkdtemp(prefix="amod-", dir=self.inbox))
+        staging_root = Path(tempfile.mkdtemp(prefix="amod-", dir=self.staging))
         try:
             with zipfile.ZipFile(archive) as source:
                 infos = source.infolist()
@@ -307,16 +289,6 @@ class ModStore:
             raise
         if backup.exists():
             shutil.rmtree(backup)
-
-    def _write_error(self, archive: Path, message: str) -> None:
-        error_path = archive.with_suffix(archive.suffix + ".error.txt")
-        try:
-            error_path.write_text(message + "\n", encoding="utf-8")
-        except OSError:
-            pass
-
-    def _clear_error(self, archive: Path) -> None:
-        archive.with_suffix(archive.suffix + ".error.txt").unlink(missing_ok=True)
 
 
 def _validate_archive_layout(root: Path) -> None:

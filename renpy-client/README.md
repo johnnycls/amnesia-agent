@@ -55,7 +55,7 @@ started. It fails fast if the bundled server cannot start.
    - Missing model/API key → **Config** (cannot proceed without save success)
    - Missing/invalid character → **Character Select**
    - Corrupt Ren'Py client preferences → offer **Reset Ren'Py client preferences**, then reload setup
-   - Valid `.amod` files in the per-user mod inbox → install automatically before character loading
+   - Community mods are installed only through the one-file `.amod` picker in Mod Manager
    - Corrupt server settings → offer **Reset server settings** (clears provider credentials), then reload setup
 
 ## Architecture
@@ -66,13 +66,18 @@ renpy-client/game/
   audio/        # shared looping music service and channel ownership
   state/        # AppState + stage apply + readiness helpers
   home_config/  # Ren'Py persistent preferences (JSON adapter is test-only)
-  characters/   # bundled packs, mod loader, and .amod store
+  characters/   # bundled packs, mod loader, and one-file .amod store
+  file_picker.py # desktop/mobile picker seam; returns one private staging copy
   screens/      # loading, config, character_select, mod_manager, main
   script.rpy / options.rpy
 ```
 
 Standalone frontend — no cross-package imports. Patterns were copied slim
 (including home JSON store with `chmod 0600` writes).
+
+Native Android/iOS picker overlays and packaging hooks are documented in
+[`native/README.md`](native/README.md). Desktop uses Ren'Py's bundled native
+file-dialog wrapper through the same picker seam.
 
 ## Characters
 
@@ -107,16 +112,16 @@ bgm/default.ogg
 
 Required manifest fields are `format` (`amnesia-character`), `schema_version` (`1`),
 `id`, `version` (semantic `major.minor.patch`), and `display_name`. Bundled and
-exported packs also carry the same semantic `version` in `character.json`. Copy downloaded
-`.amod` files into the per-user `mods/inbox` directory. Valid archives are installed
-automatically at startup and removed from the inbox. Invalid archives remain with a
-`.error.txt` explanation. Installed mods are loaded from the Ren'Py per-user save
-directory, not from the application directory.
+exported packs also carry the same semantic `version` in `character.json`. Use
+**Mod Manager → Import .amod** to choose exactly one archive through the platform file
+picker. The selected file is copied into private temporary storage, validated,
+installed transactionally, and then deleted on success or failure. Installed mods are
+loaded from the Ren'Py per-user save directory, not from the application directory.
+There is no startup inbox scan.
 
 The Character Select screen uses a horizontally scrollable list of clickable animated
 portrait cards. Bundled and community characters are sorted by display name. Use the
-Mod Manager to export a character as `.amod`, inspect rejected archives, or remove an
-installed mod.
+Mod Manager to import or export a character as `.amod`, or remove an installed mod.
 
 ### Manual mod creation
 
@@ -137,9 +142,9 @@ installed mod.
 7. Add a root-level `manifest.json` with the same ID/display name and a semantic version.
 8. ZIP the archive contents directly, without an extra parent folder, and rename it to
    `.amod`.
-9. Copy the `.amod` into the installed build's per-user `mods/inbox` directory.
-10. Start the Ren'Py client. Valid archives install automatically; invalid archives remain
-    with an adjacent `.error.txt` explanation.
+9. Open **Mod Manager → Import .amod** and select the archive. Only one archive is
+   processed per picker operation; the temporary input is removed after success or
+   failure.
 
 ### Art direction
 

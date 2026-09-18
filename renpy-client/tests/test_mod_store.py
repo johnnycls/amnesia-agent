@@ -1,4 +1,4 @@
-"""Safe .amod lifecycle tests."""
+"""Safe one-file .amod lifecycle tests."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from characters.mod_store import ModStore  # noqa: E402
 class ModStoreTests(unittest.TestCase):
     def _archive(
         self,
-        inbox: Path,
+        destination: Path,
         *,
         mod_id: str = "creator.character",
         version: str = "1.0.0",
@@ -63,7 +63,7 @@ class ModStoreTests(unittest.TestCase):
             "version": version,
             "display_name": "Community",
         }
-        destination = inbox / f"{mod_id.replace('.', '-')}-{version}.amod"
+        destination.parent.mkdir(parents=True, exist_ok=True)
         with zipfile.ZipFile(destination, "w", compression=zipfile.ZIP_DEFLATED) as archive:
             archive.writestr("manifest.json", json.dumps(manifest))
             for path in source.rglob("*"):
@@ -73,18 +73,17 @@ class ModStoreTests(unittest.TestCase):
                 archive.writestr(name, content)
         return destination
 
-    def test_install_removes_valid_archive_and_loads_pack(self) -> None:
+    def test_install_selected_archive_loads_pack_without_scanning(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            inbox = root / "inbox"
-            inbox.mkdir()
-            archive = self._archive(inbox)
-            store = ModStore(root)
+            archive = self._archive(root / "picked.amod")
+            store = ModStore(root / "mods")
 
-            results = store.install_inbox()
+            result = store.install_selected_archive(archive)
 
-            self.assertTrue(results[0].installed)
-            self.assertFalse(archive.exists())
+            self.assertTrue(result.installed)
+            self.assertTrue(archive.exists())  # caller owns picker cleanup
+            self.assertFalse(list(store.staging.iterdir()))
             pack = load_character(
                 "creator.character", root=store.installed, source="mod", version="1.0.0"
             )
@@ -93,50 +92,43 @@ class ModStoreTests(unittest.TestCase):
     def test_bgm_directory_is_allowed_in_archive(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            inbox = root / "inbox"
-            inbox.mkdir()
-            self._archive(inbox)
-            store = ModStore(root)
+            archive = self._archive(root / "picked.amod")
+            store = ModStore(root / "mods")
 
-            results = store.install_inbox()
+            result = store.install_selected_archive(archive)
 
-            self.assertTrue(results[0].installed)
-            self.assertTrue((store.installed / "creator.character" / "bgm" / "default.ogg").is_file())
+            self.assertTrue(result.installed)
+            self.assertTrue(
+                (store.installed / "creator.character" / "bgm" / "default.ogg").is_file()
+            )
 
-    def test_invalid_archive_stays_in_inbox_with_error(self) -> None:
+    def test_invalid_archive_returns_error_without_error_report(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            inbox = root / "inbox"
-            inbox.mkdir()
-            archive = inbox / "bad.amod"
+            archive = root / "bad.amod"
             with zipfile.ZipFile(archive, "w") as output:
                 output.writestr("../escape.txt", "no")
-            store = ModStore(root)
+            store = ModStore(root / "mods")
 
-            results = store.install_inbox()
+            result = store.install_selected_archive(archive)
 
-            self.assertFalse(results[0].installed)
+            self.assertFalse(result.installed)
+            self.assertTrue(result.error)
             self.assertTrue(archive.exists())
-            self.assertTrue(archive.with_suffix(".amod.error.txt").exists())
+            self.assertFalse(archive.with_suffix(".amod.error.txt").exists())
 
-    def test_highest_valid_semantic_version_wins(self) -> None:
+    def test_older_archive_is_noop_and_preserves_newer_install(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            inbox = root / "inbox"
-            inbox.mkdir()
-            old = self._archive(inbox, version="1.9.0")
-            new = self._archive(inbox, version="1.10.0")
-            store = ModStore(root)
+            store = ModStore(root / "mods")
+            newer = self._archive(root / "new.amod", version="1.10.0")
+            older = self._archive(root / "old.amod", version="1.9.0")
 
-            results = store.install_inbox()
-            by_version = {item.version: item for item in results}
+            self.assertTrue(store.install_selected_archive(newer).installed)
+            result = store.install_selected_archive(older)
 
-            self.assertFalse(old.exists())
-            self.assertFalse(new.exists())
-            self.assertTrue(by_version["1.10.0"].installed)
-            self.assertEqual(by_version["1.10.0"].note, "")
-            self.assertFalse(by_version["1.9.0"].installed)
-            self.assertEqual(by_version["1.9.0"].note, "superseded by 1.10.0")
+            self.assertFalse(result.installed)
+            self.assertEqual(result.note, "superseded by installed 1.10.0")
             self.assertEqual(
                 store.installed_manifests()["creator.character"].version, "1.10.0"
             )
@@ -144,37 +136,33 @@ class ModStoreTests(unittest.TestCase):
     def test_bundled_id_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            inbox = root / "inbox"
-            inbox.mkdir()
-            archive = self._archive(inbox, mod_id="aurora")
-            store = ModStore(root)
+            archive = self._archive(root / "picked.amod", mod_id="aurora")
+            store = ModStore(root / "mods")
 
-            results = store.install_inbox(reserved_ids={"aurora"})
+            result = store.install_selected_archive(archive, reserved_ids={"aurora"})
 
-            self.assertFalse(results[0].installed)
-            self.assertTrue(archive.exists())
+            self.assertFalse(result.installed)
+            self.assertIn("conflicts", result.error)
             self.assertFalse((store.installed / "aurora").exists())
-
-
-if __name__ == "__main__":
-    unittest.main()
 
     def test_export_uses_pack_version(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            store = ModStore(root)
-            inbox = root / "inbox"
-            inbox.mkdir()
-            self._archive(inbox, mod_id="creator.character", version="2.3.4")
-            store.install_inbox()
+            store = ModStore(root / "mods")
+            archive = self._archive(root / "picked.amod", version="2.3.4")
+            self.assertTrue(store.install_selected_archive(archive).installed)
             pack = load_character(
                 "creator.character",
                 root=store.installed,
                 source="mod",
                 version="2.3.4",
             )
-            # Prefer character.json version when present after we add it to archives.
+
             destination = store.export_character(pack)
+
             self.assertEqual(destination.name, "creator.character-2.3.4.amod")
             self.assertTrue(destination.is_file())
 
+
+if __name__ == "__main__":
+    unittest.main()

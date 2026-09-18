@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import threading
+from pathlib import Path
 from typing import Any
 
 from api.client import (
@@ -26,7 +27,8 @@ from characters.loader import (
     load_character_root_safely,
 )
 from characters.media import make_displayable
-from characters.mod_store import ModStore
+from characters.mod_store import InstallResult, ModStore
+from file_picker import FilePicker, PickerResult, cleanup_staged_file
 from home_config.store import (
     DEFAULT_LANGUAGE,
     SUPPORTED_LANGUAGES,
@@ -61,13 +63,14 @@ LANGUAGE_NAMES = {
 class AppState:
     """Single source of UI state for the Assistant Ren'Py client."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, file_picker: FilePicker | None = None) -> None:
         self.client = Client()
         self.server_url = DEFAULT_SERVER_URL
         self.server_token: str | None = None
         self.pending_pairing: PairingPayload | None = None
         self.config_store = build_config_store()
         self.mod_store = ModStore()
+        self.file_picker = file_picker or FilePicker()
         self.assistant_config: AssistantConfig | None = None
 
         self.page = "loading"
@@ -115,6 +118,7 @@ class AppState:
         self.settings_api_key_set = False
         self.provider_configured = False
         self.mod_manager_status = ""
+        self._mod_status_before_import = ""
 
     # --- bootstrap / loading -------------------------------------------------
 
@@ -215,11 +219,7 @@ class AppState:
                 bundled = load_all_characters()
                 if not bundled:
                     raise CharacterError("Expected at least one bundled character pack")
-                install_results = self.mod_store.install_inbox(
-                    reserved_ids={
-                        pack.id for pack in bundled if isinstance(pack, CharacterPack)
-                    }
-                )
+                install_results: list[InstallResult] = []
                 versions = {
                     mod_id: manifest.version
                     for mod_id, manifest in self.mod_store.installed_manifests().items()
@@ -236,8 +236,9 @@ class AppState:
                         getattr(pack, "id", ""),
                     ),
                 )
+                # New archives are installed only through the explicit picker.
+                # Startup still loads already-installed community packs.
                 mod_messages = list(mod_errors)
-                mod_messages.extend(result.error for result in install_results if result.error)
                 assert config is not None
                 invoke(
                     self._loading_ok,
@@ -446,6 +447,160 @@ class AppState:
         self._refresh()
 
     # --- mods / media --------------------------------------------------------
+
+    def _load_character_catalog(self) -> tuple[list[CharacterPack], list[str]]:
+        bundled = load_all_characters()
+        if not bundled:
+            raise CharacterError("Expected at least one bundled character pack")
+        versions = {
+            mod_id: manifest.version
+            for mod_id, manifest in self.mod_store.installed_manifests().items()
+        }
+        mods, mod_errors = load_character_root_safely(
+            self.mod_store.installed_root,
+            source="mod",
+            versions=versions,
+        )
+        packs = sorted(
+            bundled + mods,
+            key=lambda pack: (
+                getattr(pack, "display_name", "").casefold(),
+                getattr(pack, "id", ""),
+            ),
+        )
+        return packs, list(mod_errors)
+
+    def _refresh_character_catalog(
+        self,
+        packs: list[CharacterPack],
+        mod_messages: list[str],
+    ) -> None:
+        current_id = self.character.id if self.character is not None else ""
+        self.characters = packs
+        self.mod_messages = mod_messages
+        self.character = next(
+            (pack for pack in packs if pack.id == current_id),
+            None,
+        )
+        if self.character is not None:
+            self._sync_stage_paths()
+
+    def import_mod(self) -> None:
+        """Pick, install, and consume exactly one .amod archive."""
+        if self.busy or self.operation is not None or not self.ready:
+            return
+        self._mod_status_before_import = self.status
+        operation_id = self._begin_operation("importing_mod")
+        self.status = "Choose one .amod character archive..."
+        self.mod_manager_status = ""
+        self.error = ""
+        self._refresh()
+
+        def picked(result: PickerResult) -> None:
+            self._mod_picker_finished(result, operation_id)
+
+        try:
+            self.file_picker.pick_one(picked)
+        except Exception as error:  # noqa: BLE001 — adapter boundary
+            self._mod_picker_finished(
+                PickerResult(error=f"Could not open the file picker: {error}"),
+                operation_id,
+            )
+
+    def _mod_picker_finished(self, result: PickerResult, operation_id: int) -> None:
+        if not self._operation_is_current(operation_id):
+            cleanup_staged_file(result.path)
+            return
+        if result.cancelled:
+            self.status = self._mod_status_before_import
+            self._end_operation(operation_id)
+            return
+        if result.error:
+            cleanup_staged_file(result.path)
+            self._end_operation(operation_id)
+            self.mod_manager_status = f"Import unavailable: {result.error}"
+            self.status = self.mod_manager_status
+            self._refresh()
+            return
+        if result.path is None:
+            self._end_operation(operation_id)
+            self.mod_manager_status = "Import failed: picker returned no file."
+            self.status = self.mod_manager_status
+            self._refresh()
+            return
+
+        source = result.path
+        self.status = "Installing character..."
+        self._refresh()
+        def work() -> None:
+            try:
+                reserved_ids = {pack.id for pack in load_all_characters()}
+                install_result = self.mod_store.install_selected_archive(
+                    source,
+                    reserved_ids=reserved_ids,
+                )
+                packs, mod_messages = self._load_character_catalog()
+                invoke(
+                    self._mod_import_finished,
+                    install_result,
+                    packs,
+                    mod_messages,
+                    source,
+                    operation_id,
+                )
+            except Exception as error:  # noqa: BLE001 — isolate one import
+                invoke(
+                    self._mod_import_failed,
+                    error,
+                    source,
+                    operation_id,
+                )
+
+        threading.Thread(target=work, name="assistant-mod-import", daemon=True).start()
+
+    def _mod_import_finished(
+        self,
+        result: InstallResult,
+        packs: list[CharacterPack],
+        mod_messages: list[str],
+        source: Path,
+        operation_id: int,
+    ) -> None:
+        try:
+            if not self._operation_is_current(operation_id):
+                return
+            self._refresh_character_catalog(packs, mod_messages)
+            self.mod_install_results = [result]
+            if result.error:
+                self.mod_manager_status = f"Import failed: {result.error}"
+                self.status = self.mod_manager_status
+            elif result.installed:
+                self.mod_manager_status = (
+                    f"Installed {result.mod_id} {result.version}."
+                )
+                self.status = self.mod_manager_status
+            else:
+                self.mod_manager_status = result.note or "Archive was not installed."
+                self.status = self.mod_manager_status
+        finally:
+            cleanup_staged_file(source)
+            self._end_operation(operation_id)
+            self._refresh()
+
+    def _mod_import_failed(
+        self,
+        error: Exception,
+        source: Path,
+        operation_id: int,
+    ) -> None:
+        try:
+            if self._operation_is_current(operation_id):
+                self.mod_manager_status = f"Import failed: {error}"
+                self.status = self.mod_manager_status
+        finally:
+            cleanup_staged_file(source)
+            self._end_operation(operation_id)
+            self._refresh()
 
     def character_portrait_displayable(self, pack: CharacterPack) -> Any:
         asset = pack.portrait_asset()

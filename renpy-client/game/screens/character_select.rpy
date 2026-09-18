@@ -2,7 +2,7 @@ screen character_select_page():
     vbox:
         spacing 14
         text "Choose a character" style "app_title"
-        text "Click a portrait to apply it. Community mods are read from the inbox automatically." style "app_small"
+        text "Click a portrait to apply it. Import community mods from Mod Manager." style "app_small"
 
         hbox:
             spacing 10
@@ -35,7 +35,7 @@ screen character_select_page():
             textbutton "→" action Function(app.scroll_character_list, 1) sensitive (len(app.characters) > 0)
 
         if app.mod_messages:
-            text "Some mods were rejected or disabled:" style "app_small"
+            text "Some installed mods could not be loaded:" style "app_small"
             viewport:
                 ymaximum 100
                 mousewheel True
@@ -51,8 +51,8 @@ screen mod_manager_page():
             textbutton "Back" action Function(app.go_character_select)
             text "Mod Manager" style "app_title"
 
-        text "Valid .amod files in this inbox are installed automatically at startup." style "app_small"
-        text "Inbox: [app.mod_store.inbox]" style "app_small"
+        text "Import one .amod character archive at a time." style "app_small"
+        textbutton "Import .amod" action Function(app.import_mod) sensitive (not app.busy and app.operation is None)
 
         if app.mod_manager_status:
             text app.mod_manager_status style "app_small"
@@ -76,7 +76,7 @@ screen mod_manager_page():
                     text "No installed community mods." style "app_small"
 
         if app.mod_messages:
-            text "Rejected or disabled mods" size 24 bold True
+            text "Installed character load errors" size 24 bold True
             viewport:
                 ymaximum 180
                 mousewheel True
