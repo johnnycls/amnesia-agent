@@ -145,24 +145,5 @@ class ModStoreTests(unittest.TestCase):
             self.assertIn("conflicts", result.error)
             self.assertFalse((store.installed / "aurora").exists())
 
-    def test_export_uses_pack_version(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            store = ModStore(root / "mods")
-            archive = self._archive(root / "picked.amod", version="2.3.4")
-            self.assertTrue(store.install_selected_archive(archive).installed)
-            pack = load_character(
-                "creator.character",
-                root=store.installed,
-                source="mod",
-                version="2.3.4",
-            )
-
-            destination = store.export_character(pack)
-
-            self.assertEqual(destination.name, "creator.character-2.3.4.amod")
-            self.assertTrue(destination.is_file())
-
-
 if __name__ == "__main__":
     unittest.main()

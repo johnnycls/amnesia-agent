@@ -70,7 +70,6 @@ screen mod_manager_page():
                         hbox:
                             spacing 14
                             text "[character.display_name] ([character.id])" style "app_small" xfill True
-                            textbutton "Export .amod" action Function(app.export_character, character.id)
                             textbutton "Remove" action Function(app.remove_mod, character.id)
                 if not app.installed_characters():
                     text "No installed community mods." style "app_small"

@@ -1,4 +1,4 @@
-"""Safe .amod installation, export, and user-mod storage."""
+"""Safe one-file .amod installation and user-mod storage."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from characters.loader import CharacterPack, load_character
+from characters.loader import load_character
 
 MAX_ARCHIVE_BYTES = 100 * 1024 * 1024
 MAX_UNPACKED_BYTES = 250 * 1024 * 1024
@@ -97,13 +97,11 @@ class ModStore:
         self.root = Path(root).expanduser().resolve(strict=False) if root else default_mods_root()
         self.staging = self.root / ".staging"
         self.installed = self.root / "installed"
-        self.exports = self.root / "exports"
         self._ensure_directories()
 
     def _ensure_directories(self) -> None:
         self.staging.mkdir(parents=True, exist_ok=True)
         self.installed.mkdir(parents=True, exist_ok=True)
-        self.exports.mkdir(parents=True, exist_ok=True)
 
     @property
     def installed_root(self) -> str:
@@ -160,39 +158,6 @@ class ModStore:
         finally:
             if candidate is not None:
                 shutil.rmtree(candidate.staging_root, ignore_errors=True)
-
-    def export_character(self, pack: CharacterPack) -> Path:
-        """Export a validated character pack as a root-layout .amod archive."""
-        self.exports.mkdir(parents=True, exist_ok=True)
-        if not pack.version or _VERSION_RE.fullmatch(pack.version) is None:
-            raise ModError(
-                f"Character {pack.id!r} needs a semantic version before export "
-                "(set character.json version)"
-            )
-        destination = self.exports / f"{pack.id}-{pack.version}.amod"
-        temporary = destination.with_suffix(".tmp")
-        manifest = {
-            "format": _MOD_FORMAT,
-            "schema_version": 1,
-            "id": pack.id,
-            "version": pack.version,
-            "display_name": pack.display_name,
-        }
-        try:
-            with zipfile.ZipFile(temporary, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-                archive.writestr("manifest.json", json.dumps(manifest, indent=2) + "\n")
-                for path in sorted(Path(pack.pack_dir).rglob("*")):
-                    if not path.is_file():
-                        continue
-                    relative = path.relative_to(pack.pack_dir).as_posix()
-                    if relative == "manifest.json":
-                        continue
-                    archive.write(path, relative)
-            temporary.replace(destination)
-        except OSError:
-            temporary.unlink(missing_ok=True)
-            raise
-        return destination
 
     def remove(self, mod_id: str) -> None:
         if not _safe_mod_id(mod_id):

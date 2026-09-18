@@ -112,7 +112,7 @@ bgm/default.ogg
 
 Required manifest fields are `format` (`amnesia-character`), `schema_version` (`1`),
 `id`, `version` (semantic `major.minor.patch`), and `display_name`. Bundled and
-exported packs also carry the same semantic `version` in `character.json`. Use
+installed packs also carry the same semantic `version` in `character.json`. Use
 **Mod Manager → Import .amod** to choose exactly one archive through the platform file
 picker. The selected file is copied into private temporary storage, validated,
 installed transactionally, and then deleted on success or failure. Installed mods are
@@ -120,8 +120,8 @@ loaded from the Ren'Py per-user save directory, not from the application directo
 There is no startup inbox scan.
 
 The Character Select screen uses a horizontally scrollable list of clickable animated
-portrait cards. Bundled and community characters are sorted by display name. Use the
-Mod Manager to import or export a character as `.amod`, or remove an installed mod.
+portrait cards. Bundled and community characters are sorted by display name. Use
+Mod Manager to import a character as `.amod`, or remove an installed mod.
 
 ### Manual mod creation
 

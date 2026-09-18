@@ -653,17 +653,6 @@ class AppState:
             self.mod_manager_status = f"Remove failed: {error}"
         self._refresh()
 
-    def export_character(self, character_id: str) -> None:
-        pack = next((item for item in self.characters if item.id == character_id), None)
-        if pack is None:
-            return
-        try:
-            destination = self.mod_store.export_character(pack)
-            self.mod_manager_status = f"Exported to {destination}"
-        except Exception as error:  # noqa: BLE001
-            self.mod_manager_status = f"Export failed: {error}"
-        self._refresh()
-
     # --- readiness routing ---------------------------------------------------
 
     def _available_character_ids(self) -> set[str]:
