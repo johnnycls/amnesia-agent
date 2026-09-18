@@ -22,7 +22,7 @@ class _FakeAdapter:
     def __init__(self, result: PickerResult) -> None:
         self.result = result
 
-    def pick_one(self, callback) -> None:
+    def pick_one(self, staging_dir, callback) -> None:
         callback(self.result)
 
 
@@ -31,7 +31,8 @@ class FilePickerTests(unittest.TestCase):
         result = PickerResult(cancelled=True)
         received: list[PickerResult] = []
 
-        FilePicker(adapter=_FakeAdapter(result)).pick_one(received.append)
+        with tempfile.TemporaryDirectory() as directory:
+            FilePicker(adapter=_FakeAdapter(result)).pick_one(directory, received.append)
 
         self.assertEqual(received, [result])
 
@@ -44,6 +45,34 @@ class FilePickerTests(unittest.TestCase):
             cleanup_staged_file(path)
 
             self.assertFalse(path.exists())
+
+    def test_desktop_picker_stages_copy_without_deleting_original(self) -> None:
+        import types
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            original = root / "original.amod"
+            original.write_bytes(b"fixture")
+            fake_renpy = types.SimpleNamespace(
+                tfd=types.SimpleNamespace(
+                    openFileDialog=lambda *args: str(original),
+                )
+            )
+            old_renpy = sys.modules.get("renpy")
+            sys.modules["renpy"] = fake_renpy
+            try:
+                received: list[PickerResult] = []
+                DesktopPickerAdapter().pick_one(root / "staging", received.append)
+            finally:
+                if old_renpy is None:
+                    sys.modules.pop("renpy", None)
+                else:
+                    sys.modules["renpy"] = old_renpy
+
+            self.assertEqual(received[0].error, "")
+            self.assertIsNotNone(received[0].path)
+            self.assertTrue(original.exists())
+            self.assertTrue(received[0].path.is_file())
 
     def test_desktop_picker_rejects_multiple_selection_result(self) -> None:
         # The adapter checks the native tinyfiledialogs separator even though
@@ -59,7 +88,8 @@ class FilePickerTests(unittest.TestCase):
         sys.modules["renpy"] = fake_renpy
         try:
             received: list[PickerResult] = []
-            DesktopPickerAdapter().pick_one(received.append)
+            with tempfile.TemporaryDirectory() as directory:
+                DesktopPickerAdapter().pick_one(directory, received.append)
             self.assertEqual(received[0].error, "Select exactly one .amod file.")
         finally:
             if old_renpy is None:

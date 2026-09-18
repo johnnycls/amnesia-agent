@@ -1,8 +1,7 @@
 """One-file .amod picker seam for desktop and mobile builds.
 
-The picker always returns a private staging copy. Callers therefore own the
-returned path and can delete it unconditionally after installation without
-ever deleting the user's original desktop file.
+Adapters only stage one selected file. The mod-store transaction owns the
+staging directory and clears it after every operation.
 """
 
 from __future__ import annotations
@@ -34,18 +33,31 @@ PickerCallback = Callable[[PickerResult], None]
 
 
 class PickerAdapter(Protocol):
-    def pick_one(self, callback: PickerCallback) -> None:
-        """Start one .amod selection and complete exactly once."""
+    def pick_one(
+        self,
+        staging_dir: str | os.PathLike[str],
+        callback: PickerCallback,
+    ) -> None:
+        """Stage one .amod selection and complete exactly once."""
 
 
-def _stage_desktop_file(source: str | os.PathLike[str]) -> Path:
-    """Copy a user-selected desktop file to caller-owned temporary storage."""
+def _stage_desktop_file(
+    source: str | os.PathLike[str],
+    staging_dir: str | os.PathLike[str],
+) -> Path:
+    """Copy a user-selected desktop file into caller-owned staging."""
     source_path = Path(source)
     if source_path.suffix.casefold() != ".amod":
         raise ValueError("Please select a .amod character archive.")
     if not source_path.is_file():
         raise OSError("The selected file is no longer available.")
-    fd, destination = tempfile.mkstemp(prefix="amod-import-", suffix=".amod")
+    staging = Path(staging_dir)
+    staging.mkdir(parents=True, exist_ok=True)
+    fd, destination = tempfile.mkstemp(
+        prefix="amod-import-",
+        suffix=".amod",
+        dir=staging,
+    )
     os.close(fd)
     target = Path(destination)
     try:
@@ -59,7 +71,11 @@ def _stage_desktop_file(source: str | os.PathLike[str]) -> Path:
 class DesktopPickerAdapter:
     """Use Ren'Py's bundled tinyfiledialogs wrapper on desktop targets."""
 
-    def pick_one(self, callback: PickerCallback) -> None:
+    def pick_one(
+        self,
+        staging_dir: str | os.PathLike[str],
+        callback: PickerCallback,
+    ) -> None:
         try:
             import renpy  # type: ignore[import-not-found]
         except ImportError:
@@ -88,7 +104,7 @@ class DesktopPickerAdapter:
             callback(PickerResult(error="Select exactly one .amod file."))
             return
         try:
-            staged = _stage_desktop_file(selected)
+            staged = _stage_desktop_file(selected, staging_dir)
         except (OSError, ValueError) as error:
             callback(PickerResult(error=str(error)))
             return
@@ -96,19 +112,26 @@ class DesktopPickerAdapter:
 
 
 class NativeBridgePickerAdapter:
-    """Adapter for a platform bridge exposing one callback-based picker.
+    """Adapter for a bridge exposing one callback-based picker.
 
-    The native bridge must call ``complete(path, error, cancelled)`` after it
-    has copied the selected document into private temporary storage. The
-    adapter marshals completion through Ren'Py's main-thread dispatcher before
-    invoking the game callback.
+    The bridge receives the shared staging directory and must copy the selected
+    document there before calling ``complete``. Completion is marshalled through
+    Ren'Py's main-thread dispatcher before reaching the game callback.
     """
 
     def __init__(self, bridge: object) -> None:
         self.bridge = bridge
 
-    def pick_one(self, callback: PickerCallback) -> None:
-        def complete(path: str | None, error: str | None = None, cancelled: bool = False) -> None:
+    def pick_one(
+        self,
+        staging_dir: str | os.PathLike[str],
+        callback: PickerCallback,
+    ) -> None:
+        def complete(
+            path: str | None,
+            error: str | None = None,
+            cancelled: bool = False,
+        ) -> None:
             result = PickerResult(
                 path=Path(path) if path else None,
                 cancelled=cancelled,
@@ -120,7 +143,7 @@ class NativeBridgePickerAdapter:
             start = getattr(self.bridge, "openAmodPicker", None)
             if start is None:
                 raise FilePickerUnavailable("The native file picker bridge is incomplete.")
-            start(complete)
+            start(os.fspath(staging_dir), complete)
         except Exception as error:  # noqa: BLE001 — native bridge failure
             invoke(callback, PickerResult(error=str(error)))
 
@@ -154,20 +177,28 @@ class FilePicker:
                 return _UnavailableAdapter(str(error))
         return DesktopPickerAdapter()
 
-    def pick_one(self, callback: PickerCallback) -> None:
-        self.adapter.pick_one(callback)
+    def pick_one(
+        self,
+        staging_dir: str | os.PathLike[str],
+        callback: PickerCallback,
+    ) -> None:
+        self.adapter.pick_one(staging_dir, callback)
 
 
 class _UnavailableAdapter:
     def __init__(self, message: str) -> None:
         self.message = message or "The file picker is unavailable on this build."
 
-    def pick_one(self, callback: PickerCallback) -> None:
+    def pick_one(
+        self,
+        staging_dir: str | os.PathLike[str],
+        callback: PickerCallback,
+    ) -> None:
         callback(PickerResult(error=self.message))
 
 
 def cleanup_staged_file(path: Path | None) -> None:
-    """Best-effort cleanup for one picker-owned temporary file."""
+    """Best-effort compatibility helper for picker-owned paths."""
     if path is None:
         return
     try:

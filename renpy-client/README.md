@@ -114,10 +114,12 @@ Required manifest fields are `format` (`amnesia-character`), `schema_version` (`
 `id`, `version` (semantic `major.minor.patch`), and `display_name`. Bundled and
 installed packs also carry the same semantic `version` in `character.json`. Use
 **Mod Manager → Import .amod** to choose exactly one archive through the platform file
-picker. The selected file is copied into private temporary storage, validated,
-installed transactionally, and then deleted on success or failure. Installed mods are
-loaded from the Ren'Py per-user save directory, not from the application directory.
-There is no startup inbox scan.
+picker. The selected file is copied into the application-owned
+`mods/.staging` directory, validated, installed transactionally, and then removed.
+The staging directory is recursively cleared at startup and before every new picker
+operation; if cleanup fails, the app remains usable but importing retries cleanup
+before opening the picker. Installed mods are loaded from the Ren'Py per-user save
+directory, not from the application directory. There is no startup inbox scan.
 
 The Character Select screen uses a horizontally scrollable list of clickable animated
 portrait cards. Bundled and community characters are sorted by display name. Use

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import threading
-from pathlib import Path
 from typing import Any
 
 from api.client import (
@@ -28,7 +27,7 @@ from characters.loader import (
 )
 from characters.media import make_displayable
 from characters.mod_store import InstallResult, ModStore
-from file_picker import FilePicker, PickerResult, cleanup_staged_file
+from file_picker import FilePicker, PickerResult
 from home_config.store import (
     DEFAULT_LANGUAGE,
     SUPPORTED_LANGUAGES,
@@ -119,6 +118,8 @@ class AppState:
         self.provider_configured = False
         self.mod_manager_status = ""
         self._mod_status_before_import = ""
+        self.mod_import_ready = True
+        self.mod_import_cleanup_error = ""
 
     # --- bootstrap / loading -------------------------------------------------
 
@@ -151,6 +152,16 @@ class AppState:
         if self.starting or self.ready or self.operation is not None:
             return
         operation_id = self._begin_operation("starting")
+        try:
+            self.mod_store.clear_staging()
+            self.mod_import_ready = True
+            self.mod_import_cleanup_error = ""
+        except OSError as error:
+            # Existing installed content remains usable; a picker retry will
+            # attempt cleanup again before opening a new picker.
+            self.mod_import_ready = False
+            self.mod_import_cleanup_error = str(error)
+            self.mod_manager_status = f"Import unavailable: {error}"
         self.starting = True
         self.page = "loading"
         self.status = "Connecting to server..."
@@ -485,9 +496,25 @@ class AppState:
         if self.character is not None:
             self._sync_stage_paths()
 
+    def _retry_mod_staging_cleanup(self) -> bool:
+        try:
+            self.mod_store.clear_staging()
+        except OSError as error:
+            self.mod_import_ready = False
+            self.mod_import_cleanup_error = str(error)
+            self.mod_manager_status = f"Import unavailable: {error}"
+            self.status = self.mod_manager_status
+            self._refresh()
+            return False
+        self.mod_import_ready = True
+        self.mod_import_cleanup_error = ""
+        return True
+
     def import_mod(self) -> None:
         """Pick, install, and consume exactly one .amod archive."""
         if self.busy or self.operation is not None or not self.ready:
+            return
+        if not self._retry_mod_staging_cleanup():
             return
         self._mod_status_before_import = self.status
         operation_id = self._begin_operation("importing_mod")
@@ -500,7 +527,7 @@ class AppState:
             self._mod_picker_finished(result, operation_id)
 
         try:
-            self.file_picker.pick_one(picked)
+            self.file_picker.pick_one(self.mod_store.staging, picked)
         except Exception as error:  # noqa: BLE001 — adapter boundary
             self._mod_picker_finished(
                 PickerResult(error=f"Could not open the file picker: {error}"),
@@ -509,34 +536,38 @@ class AppState:
 
     def _mod_picker_finished(self, result: PickerResult, operation_id: int) -> None:
         if not self._operation_is_current(operation_id):
-            cleanup_staged_file(result.path)
             return
-        if result.cancelled:
-            self.status = self._mod_status_before_import
+        if result.cancelled or result.error or result.path is None:
+            cleanup_error = None
+            try:
+                self.mod_store.clear_staging()
+                self.mod_import_ready = True
+                self.mod_import_cleanup_error = ""
+            except OSError as error:
+                cleanup_error = error
+                self.mod_import_ready = False
+                self.mod_import_cleanup_error = str(error)
             self._end_operation(operation_id)
-            return
-        if result.error:
-            cleanup_staged_file(result.path)
-            self._end_operation(operation_id)
-            self.mod_manager_status = f"Import unavailable: {result.error}"
-            self.status = self.mod_manager_status
-            self._refresh()
-            return
-        if result.path is None:
-            self._end_operation(operation_id)
-            self.mod_manager_status = "Import failed: picker returned no file."
+            if result.cancelled and cleanup_error is None:
+                self.status = self._mod_status_before_import
+                self._refresh()
+                return
+            message = result.error or "The picker returned no file."
+            if cleanup_error is not None:
+                message = f"{message} Cleanup failed: {cleanup_error}"
+            self.mod_manager_status = f"Import unavailable: {message}"
             self.status = self.mod_manager_status
             self._refresh()
             return
 
-        source = result.path
         self.status = "Installing character..."
         self._refresh()
+
         def work() -> None:
             try:
                 reserved_ids = {pack.id for pack in load_all_characters()}
                 install_result = self.mod_store.install_selected_archive(
-                    source,
+                    result.path,
                     reserved_ids=reserved_ids,
                 )
                 packs, mod_messages = self._load_character_catalog()
@@ -545,16 +576,10 @@ class AppState:
                     install_result,
                     packs,
                     mod_messages,
-                    source,
                     operation_id,
                 )
             except Exception as error:  # noqa: BLE001 — isolate one import
-                invoke(
-                    self._mod_import_failed,
-                    error,
-                    source,
-                    operation_id,
-                )
+                invoke(self._mod_import_failed, error, operation_id)
 
         threading.Thread(target=work, name="assistant-mod-import", daemon=True).start()
 
@@ -563,44 +588,52 @@ class AppState:
         result: InstallResult,
         packs: list[CharacterPack],
         mod_messages: list[str],
-        source: Path,
         operation_id: int,
     ) -> None:
-        try:
-            if not self._operation_is_current(operation_id):
-                return
-            self._refresh_character_catalog(packs, mod_messages)
-            self.mod_install_results = [result]
-            if result.error:
-                self.mod_manager_status = f"Import failed: {result.error}"
-                self.status = self.mod_manager_status
-            elif result.installed:
-                self.mod_manager_status = (
-                    f"Installed {result.mod_id} {result.version}."
-                )
-                self.status = self.mod_manager_status
-            else:
-                self.mod_manager_status = result.note or "Archive was not installed."
-                self.status = self.mod_manager_status
-        finally:
-            cleanup_staged_file(source)
-            self._end_operation(operation_id)
-            self._refresh()
+        if not self._operation_is_current(operation_id):
+            return
+        self._refresh_character_catalog(packs, mod_messages)
+        self.mod_install_results = [result]
+        if result.cleanup_error:
+            self.mod_import_ready = False
+            self.mod_import_cleanup_error = result.cleanup_error
+        else:
+            self.mod_import_ready = True
+            self.mod_import_cleanup_error = ""
+        if result.error:
+            self.mod_manager_status = f"Import failed: {result.error}"
+            if result.cleanup_error:
+                self.mod_manager_status += f" Cleanup failed: {result.cleanup_error}"
+        elif result.installed and result.cleanup_error:
+            self.mod_manager_status = (
+                f"Installed {result.mod_id} {result.version}, but cleanup failed: "
+                f"{result.cleanup_error}"
+            )
+        elif result.installed:
+            self.mod_manager_status = f"Installed {result.mod_id} {result.version}."
+        else:
+            self.mod_manager_status = result.note or "Archive was not installed."
+        self.status = self.mod_manager_status
+        self._end_operation(operation_id)
+        self._refresh()
 
-    def _mod_import_failed(
-        self,
-        error: Exception,
-        source: Path,
-        operation_id: int,
-    ) -> None:
+    def _mod_import_failed(self, error: Exception, operation_id: int) -> None:
+        if not self._operation_is_current(operation_id):
+            return
+        cleanup_error = None
         try:
-            if self._operation_is_current(operation_id):
-                self.mod_manager_status = f"Import failed: {error}"
-                self.status = self.mod_manager_status
-        finally:
-            cleanup_staged_file(source)
-            self._end_operation(operation_id)
-            self._refresh()
+            self.mod_store.clear_staging()
+        except OSError as cleanup_exception:
+            cleanup_error = cleanup_exception
+            self.mod_import_ready = False
+            self.mod_import_cleanup_error = str(cleanup_exception)
+        message = f"Import failed: {error}"
+        if cleanup_error is not None:
+            message += f" Cleanup failed: {cleanup_error}"
+        self.mod_manager_status = message
+        self.status = message
+        self._end_operation(operation_id)
+        self._refresh()
 
     def character_portrait_displayable(self, pack: CharacterPack) -> Any:
         asset = pack.portrait_asset()
@@ -628,7 +661,12 @@ class AppState:
             self._refresh()
             return
         self.page = "mod_manager"
-        self.mod_manager_status = ""
+        if self.mod_import_cleanup_error:
+            self.mod_manager_status = (
+                f"Import unavailable: {self.mod_import_cleanup_error}"
+            )
+        else:
+            self.mod_manager_status = ""
         self._refresh()
 
     def remove_mod(self, character_id: str) -> None:

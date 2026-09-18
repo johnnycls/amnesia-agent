@@ -2,11 +2,13 @@
 
 The Java bridge is supplied by ``native/android/FilePickerBridge.java`` and
 must be included in the generated Android activity. It copies the selected
-content URI into app-private cache storage before invoking this adapter.
+content URI into the shared ``mods/.staging`` directory before invoking this
+adapter.
 """
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -60,9 +62,13 @@ class AndroidPickerAdapter:
                 "The Android file picker bridge is not included in this build."
             ) from error
 
-    def pick_one(self, callback: Any) -> None:
+    def pick_one(self, staging_dir: str, callback: Any) -> None:
         native_callback = _Callback(callback)
         try:
-            self.bridge.openAmodPicker(self.activity, native_callback)
+            self.bridge.openAmodPicker(
+                self.activity,
+                os.fspath(staging_dir),
+                native_callback,
+            )
         except Exception as error:  # noqa: BLE001 — activity/bridge failure
             invoke(callback, PickerResult(error=f"Could not open Android file picker: {error}"))

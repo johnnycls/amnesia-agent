@@ -4,12 +4,15 @@
 
 @interface RenpyFilePicker ()
 @property(nonatomic, strong) id<RenpyFilePickerDelegate> delegate;
+@property(nonatomic, copy) NSString *temporaryDirectory;
 @end
 
 @implementation RenpyFilePicker
 
-- (void)openAmodPickerWithDelegate:(id<RenpyFilePickerDelegate>)delegate {
+- (void)openAmodPickerWithDelegate:(id<RenpyFilePickerDelegate>)delegate
+                temporaryDirectory:(NSString *)temporaryDirectory {
     self.delegate = delegate;
+    self.temporaryDirectory = temporaryDirectory;
 
     UIDocumentPickerViewController *picker;
     if (@available(iOS 14.0, *)) {
@@ -45,8 +48,17 @@
 
     NSString *filename = [NSString stringWithFormat:@"amod-import-%@.amod",
                            NSUUID.UUID.UUIDString];
+    NSString *directory = self.temporaryDirectory;
+    if (directory.length == 0) {
+        [self finishWithPath:nil error:@"The import staging directory is unavailable." cancelled:NO];
+        return;
+    }
+    [[NSFileManager defaultManager] createDirectoryAtPath:directory
+                               withIntermediateDirectories:YES
+                                                attributes:nil
+                                                     error:nil];
     NSURL *target = [NSURL fileURLWithPath:
-        [NSTemporaryDirectory() stringByAppendingPathComponent:filename]];
+        [directory stringByAppendingPathComponent:filename]];
     NSError *error = nil;
     if (![[NSFileManager defaultManager] copyItemAtURL:source toURL:target error:&error]) {
         [self finishWithPath:nil
@@ -71,6 +83,7 @@
              cancelled:(BOOL)cancelled {
     id<RenpyFilePickerDelegate> delegate = self.delegate;
     self.delegate = nil;
+    self.temporaryDirectory = nil;
     if (delegate != nil) {
         [delegate filePicker:self
           didFinishWithPath:path

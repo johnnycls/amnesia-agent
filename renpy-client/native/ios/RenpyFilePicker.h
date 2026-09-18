@@ -11,7 +11,8 @@ NS_ASSUME_NONNULL_BEGIN
 @end
 
 @interface RenpyFilePicker : NSObject <UIDocumentPickerDelegate>
-- (void)openAmodPickerWithDelegate:(id<RenpyFilePickerDelegate>)delegate;
+- (void)openAmodPickerWithDelegate:(id<RenpyFilePickerDelegate>)delegate
+                temporaryDirectory:(NSString *)temporaryDirectory;
 @end
 
 NS_ASSUME_NONNULL_END

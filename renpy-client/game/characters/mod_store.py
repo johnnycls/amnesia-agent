@@ -8,8 +8,9 @@ import re
 import shutil
 import stat
 import tempfile
+import threading
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -56,9 +57,10 @@ class ModManifest:
 class InstallResult:
     """Outcome for one explicitly selected archive.
 
-    The caller owns the selected temporary file and must remove it after this
-    result is returned. ``installed`` is true only when this archive became the
-    live install. An older archive is a successful no-op with a ``note``.
+    The import transaction owns the selected staging file and clears it before
+    returning. ``installed`` is true only when this archive became the live
+    install. An older archive is a successful no-op with a ``note``. ``clean``
+    reports whether staging cleanup completed.
     """
 
     archive: str
@@ -67,6 +69,8 @@ class InstallResult:
     installed: bool
     error: str = ""
     note: str = ""
+    clean: bool = True
+    cleanup_error: str = ""
 
 
 @dataclass
@@ -97,9 +101,14 @@ class ModStore:
         self.root = Path(root).expanduser().resolve(strict=False) if root else default_mods_root()
         self.staging = self.root / ".staging"
         self.installed = self.root / "installed"
+        self._lock = threading.RLock()
         self._ensure_directories()
 
     def _ensure_directories(self) -> None:
+        if self.staging.is_symlink() or (
+            self.staging.exists() and not self.staging.is_dir()
+        ):
+            raise OSError("Mod import staging path is not a safe directory")
         self.staging.mkdir(parents=True, exist_ok=True)
         self.installed.mkdir(parents=True, exist_ok=True)
 
@@ -107,57 +116,121 @@ class ModStore:
     def installed_root(self) -> str:
         return os.fspath(self.installed)
 
+    def clear_staging(self) -> None:
+        """Recursively clear disposable picker/import state.
+
+        Raises after attempting every child if one or more paths could not be
+        removed. Callers can then keep importing disabled until a later retry.
+        """
+        with self._lock:
+            self._clear_staging_unlocked()
+
+    def _clear_staging_unlocked(self) -> None:
+        if self.staging.is_symlink() or (
+            self.staging.exists() and not self.staging.is_dir()
+        ):
+            raise OSError("Mod import staging path is not a safe directory")
+        self.staging.mkdir(parents=True, exist_ok=True)
+        errors: list[str] = []
+        for child in list(self.staging.iterdir()):
+            try:
+                if child.is_symlink() or not child.is_dir():
+                    child.unlink()
+                else:
+                    shutil.rmtree(child)
+            except OSError as error:
+                errors.append(f"{child.name}: {error}")
+        if errors:
+            raise OSError("Could not clear mod import staging: " + "; ".join(errors))
+
+    def _assert_staged_path(self, source: Path) -> None:
+        if self.staging.is_symlink() or (
+            self.staging.exists() and not self.staging.is_dir()
+        ):
+            raise ModError("Mod import staging path is not a safe directory")
+        staging_root = self.staging.resolve(strict=False)
+        source_path = source.resolve(strict=False)
+        try:
+            source_path.relative_to(staging_root)
+        except ValueError as error:
+            raise ModError("Selected archive is outside the import staging directory") from error
+        if not source_path.is_file():
+            raise ModError("Selected archive is not available")
+
     def install_selected_archive(
         self,
         archive: str | os.PathLike[str],
         reserved_ids: set[str] | None = None,
     ) -> InstallResult:
-        """Validate and activate exactly one explicitly selected archive.
+        """Install exactly one picker-owned staged archive and clean everything.
 
-        This method never scans ``staging`` or any other directory and never
-        writes an adjacent error report. The caller owns and cleans up
-        ``archive`` after the result is returned.
+        The selected path must be inside ``staging``. This method owns the
+        complete transaction and clears the disposable staging directory in a
+        ``finally`` path. It never writes an adjacent error report.
         """
         source = Path(archive)
         candidate: _Candidate | None = None
-        try:
-            candidate = self._stage_archive(source)
-            manifest = candidate.manifest
-            if reserved_ids and manifest.id in reserved_ids:
-                raise ModError(
-                    f"Mod id {manifest.id!r} conflicts with a bundled character"
-                )
+        result: InstallResult | None = None
+        with self._lock:
+            try:
+                self._assert_staged_path(source)
+                candidate = self._stage_archive(source)
+                manifest = candidate.manifest
+                if reserved_ids and manifest.id in reserved_ids:
+                    raise ModError(
+                        f"Mod id {manifest.id!r} conflicts with a bundled character"
+                    )
 
-            installed = self.installed_manifests().get(manifest.id)
-            if installed is not None and _version_key(manifest.version) < _version_key(
-                installed.version
-            ):
-                return InstallResult(
+                installed = self.installed_manifests().get(manifest.id)
+                if installed is not None and _version_key(manifest.version) < _version_key(
+                    installed.version
+                ):
+                    result = InstallResult(
+                        archive=os.fspath(source),
+                        mod_id=manifest.id,
+                        version=manifest.version,
+                        installed=False,
+                        note=f"superseded by installed {installed.version}",
+                    )
+                else:
+                    self._activate(candidate)
+                    result = InstallResult(
+                        archive=os.fspath(source),
+                        mod_id=manifest.id,
+                        version=manifest.version,
+                        installed=True,
+                    )
+            except Exception as error:  # noqa: BLE001 — return one transaction result
+                result = InstallResult(
                     archive=os.fspath(source),
-                    mod_id=manifest.id,
-                    version=manifest.version,
+                    mod_id=candidate.manifest.id if candidate is not None else None,
+                    version=candidate.manifest.version if candidate is not None else None,
                     installed=False,
-                    note=f"superseded by installed {installed.version}",
+                    error=str(error),
                 )
+            finally:
+                try:
+                    self._clear_staging_unlocked()
+                except OSError as cleanup_error:
+                    if result is None:
+                        result = InstallResult(
+                            archive=os.fspath(source),
+                            mod_id=None,
+                            version=None,
+                            installed=False,
+                            error="Import cleanup failed",
+                            clean=False,
+                            cleanup_error=str(cleanup_error),
+                        )
+                    else:
+                        result = replace(
+                            result,
+                            clean=False,
+                            cleanup_error=str(cleanup_error),
+                        )
 
-            self._activate(candidate)
-            return InstallResult(
-                archive=os.fspath(source),
-                mod_id=manifest.id,
-                version=manifest.version,
-                installed=True,
-            )
-        except (ModError, OSError, UnicodeError, ValueError, zipfile.BadZipFile) as error:
-            return InstallResult(
-                archive=os.fspath(source),
-                mod_id=candidate.manifest.id if candidate is not None else None,
-                version=candidate.manifest.version if candidate is not None else None,
-                installed=False,
-                error=str(error),
-            )
-        finally:
-            if candidate is not None:
-                shutil.rmtree(candidate.staging_root, ignore_errors=True)
+        assert result is not None
+        return result
 
     def remove(self, mod_id: str) -> None:
         if not _safe_mod_id(mod_id):

@@ -17,12 +17,17 @@ public final class FilePickerBridge {
 
     public static final int REQUEST_CODE = 0xA001;
     private static Callback callback;
+    private static String stagingDirectory;
 
     private FilePickerBridge() {
     }
 
-    public static void openAmodPicker(Activity activity, Callback completion) {
+    public static void openAmodPicker(
+            Activity activity,
+            String stagingPath,
+            Callback completion) {
         callback = completion;
+        stagingDirectory = stagingPath;
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
         // Providers often report custom archives as application/octet-stream;
@@ -44,6 +49,8 @@ public final class FilePickerBridge {
 
         Callback completion = callback;
         callback = null;
+        String targetDirectory = stagingDirectory;
+        stagingDirectory = null;
         if (completion == null) {
             return true;
         }
@@ -55,7 +62,11 @@ public final class FilePickerBridge {
         Uri uri = data.getData();
         File target = null;
         try {
-            target = File.createTempFile("amod-import-", ".amod", activity.getCacheDir());
+            File directory = new File(targetDirectory);
+            if (!directory.isDirectory() && !directory.mkdirs()) {
+                throw new IllegalStateException("The import staging directory is unavailable.");
+            }
+            target = File.createTempFile("amod-import-", ".amod", directory);
             try (InputStream input = activity.getContentResolver().openInputStream(uri);
                  OutputStream output = new FileOutputStream(target)) {
                 if (input == null) {

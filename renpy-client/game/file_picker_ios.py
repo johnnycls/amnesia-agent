@@ -1,12 +1,13 @@
 """iOS UIDocumentPicker adapter.
 
 The Objective-C bridge is supplied by ``native/ios/RenpyFilePicker.m``. The
-bridge performs the document import/copy and invokes the delegate with an
-app-private temporary path.
+bridge performs the document import/copy into shared ``mods/.staging`` and
+invokes the delegate with that staging path.
 """
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -63,10 +64,13 @@ class IOSPickerAdapter:
             ) from error
         self._delegate: _Delegate | None = None
 
-    def pick_one(self, callback: Any) -> None:
+    def pick_one(self, staging_dir: str, callback: Any) -> None:
         self._delegate = _Delegate(callback)
         try:
-            self.bridge.openAmodPickerWithDelegate_(self._delegate)
+            self.bridge.openAmodPickerWithDelegate_temporaryDirectory_(
+                self._delegate,
+                os.fspath(staging_dir),
+            )
         except Exception as error:  # noqa: BLE001 — UIKit/bridge failure
             self._delegate = None
             invoke(callback, PickerResult(error=f"Could not open iOS file picker: {error}"))

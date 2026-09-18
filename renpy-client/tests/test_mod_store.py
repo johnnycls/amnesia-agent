@@ -73,16 +73,28 @@ class ModStoreTests(unittest.TestCase):
                 archive.writestr(name, content)
         return destination
 
-    def test_install_selected_archive_loads_pack_without_scanning(self) -> None:
+    def test_startup_cleanup_removes_partial_staging(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            archive = self._archive(root / "picked.amod")
-            store = ModStore(root / "mods")
+            root = Path(directory) / "mods"
+            stale = root / ".staging" / "partial" / "nested"
+            stale.mkdir(parents=True)
+            (stale / "archive.amod").write_bytes(b"stale")
+
+            store = ModStore(root)
+            store.clear_staging()
+
+            self.assertEqual(list(store.staging.iterdir()), [])
+
+    def test_install_selected_archive_cleans_staging_and_loads_pack(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = ModStore(Path(directory) / "mods")
+            archive = self._archive(store.staging / "picked.amod")
 
             result = store.install_selected_archive(archive)
 
             self.assertTrue(result.installed)
-            self.assertTrue(archive.exists())  # caller owns picker cleanup
+            self.assertTrue(result.clean)
+            self.assertFalse(archive.exists())
             self.assertFalse(list(store.staging.iterdir()))
             pack = load_character(
                 "creator.character", root=store.installed, source="mod", version="1.0.0"
@@ -91,9 +103,8 @@ class ModStoreTests(unittest.TestCase):
 
     def test_bgm_directory_is_allowed_in_archive(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            archive = self._archive(root / "picked.amod")
-            store = ModStore(root / "mods")
+            store = ModStore(Path(directory) / "mods")
+            archive = self._archive(store.staging / "picked.amod")
 
             result = store.install_selected_archive(archive)
 
@@ -102,29 +113,40 @@ class ModStoreTests(unittest.TestCase):
                 (store.installed / "creator.character" / "bgm" / "default.ogg").is_file()
             )
 
-    def test_invalid_archive_returns_error_without_error_report(self) -> None:
+    def test_invalid_archive_is_consumed_without_error_report(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            archive = root / "bad.amod"
+            store = ModStore(Path(directory) / "mods")
+            archive = store.staging / "bad.amod"
             with zipfile.ZipFile(archive, "w") as output:
                 output.writestr("../escape.txt", "no")
-            store = ModStore(root / "mods")
 
             result = store.install_selected_archive(archive)
 
             self.assertFalse(result.installed)
             self.assertTrue(result.error)
-            self.assertTrue(archive.exists())
+            self.assertTrue(result.clean)
+            self.assertFalse(archive.exists())
             self.assertFalse(archive.with_suffix(".amod.error.txt").exists())
 
-    def test_older_archive_is_noop_and_preserves_newer_install(self) -> None:
+    def test_archive_outside_staging_is_rejected_without_deleting_source(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             store = ModStore(root / "mods")
-            newer = self._archive(root / "new.amod", version="1.10.0")
-            older = self._archive(root / "old.amod", version="1.9.0")
+            archive = self._archive(root / "outside.amod")
 
+            result = store.install_selected_archive(archive)
+
+            self.assertFalse(result.installed)
+            self.assertIn("outside the import staging", result.error)
+            self.assertTrue(archive.exists())
+
+    def test_older_archive_is_noop_and_preserves_newer_install(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = ModStore(Path(directory) / "mods")
+            newer = self._archive(store.staging / "new.amod", version="1.10.0")
             self.assertTrue(store.install_selected_archive(newer).installed)
+            older = self._archive(store.staging / "old.amod", version="1.9.0")
+
             result = store.install_selected_archive(older)
 
             self.assertFalse(result.installed)
@@ -133,17 +155,41 @@ class ModStoreTests(unittest.TestCase):
                 store.installed_manifests()["creator.character"].version, "1.10.0"
             )
 
+    def test_cleanup_failure_is_reported_without_rollback(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = ModStore(Path(directory) / "mods")
+            archive = self._archive(store.staging / "picked.amod")
+
+            def fail_cleanup() -> None:
+                raise OSError("staging is locked")
+
+            store._clear_staging_unlocked = fail_cleanup  # type: ignore[method-assign]
+            result = store.install_selected_archive(archive)
+
+            self.assertTrue(result.installed)
+            self.assertFalse(result.clean)
+            self.assertIn("staging is locked", result.cleanup_error)
+            self.assertTrue((store.installed / "creator.character").is_dir())
+
+    def test_lock_is_reentrant_for_cleanup_and_import_setup(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = ModStore(Path(directory) / "mods")
+            with store._lock:
+                store.clear_staging()
+            self.assertEqual(list(store.staging.iterdir()), [])
+
     def test_bundled_id_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            archive = self._archive(root / "picked.amod", mod_id="aurora")
-            store = ModStore(root / "mods")
+            store = ModStore(Path(directory) / "mods")
+            archive = self._archive(store.staging / "picked.amod", mod_id="aurora")
 
             result = store.install_selected_archive(archive, reserved_ids={"aurora"})
 
             self.assertFalse(result.installed)
             self.assertIn("conflicts", result.error)
+            self.assertTrue(result.clean)
             self.assertFalse((store.installed / "aurora").exists())
+
 
 if __name__ == "__main__":
     unittest.main()
